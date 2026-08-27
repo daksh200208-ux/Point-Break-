@@ -1,0 +1,1793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>T.A.R.S. — U.S.M.C. Tactical Monolith (Sci-Fi Black Edition)</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
+<style>
+:root {
+  --cyan: #00f0ff;
+  --cyan-glow: rgba(0, 240, 255, 0.45);
+  --blue: #0088ff;
+  --blue-glow: rgba(0, 136, 255, 0.35);
+  --ice: #80d8ff;
+  --green: #00ffaa;
+  --green-glow: rgba(0, 255, 170, 0.35);
+  --amber: #ffaa00;
+  --amber-glow: rgba(255, 170, 0, 0.45);
+  --red: #ff3366;
+  --red-glow: rgba(255, 51, 102, 0.6);
+  --bg: #02060d;
+  --panel-bg: rgba(4, 12, 24, 0.72);
+  --border: rgba(0, 240, 255, 0.16);
+  --text: #e2f1f8;
+}
+
+*, *::before, *::after {
+  margin: 0; padding: 0; box-sizing: border-box;
+}
+
+body {
+  width: 100vw; height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Rajdhani', sans-serif;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Sci-fi Ambient Backdrop inspired by holographic blue/black color grading */
+body::before {
+  content: '';
+  position: fixed;
+  inset: -50px;
+  z-index: 1;
+  background: 
+    radial-gradient(circle at 15% 25%, rgba(0, 136, 255, 0.18) 0%, transparent 50%),
+    radial-gradient(circle at 85% 75%, rgba(0, 240, 255, 0.12) 0%, transparent 55%),
+    radial-gradient(circle at 50% 50%, rgba(2, 6, 13, 0.98) 0%, transparent 85%);
+  filter: blur(30px);
+  animation: ambient-drift 15s infinite alternate ease-in-out;
+  pointer-events: none;
+}
+
+@keyframes ambient-drift {
+  0% { transform: scale(1) translate(0px, 0px); }
+  50% { transform: scale(1.03) translate(6px, -10px); }
+  100% { transform: scale(0.97) translate(-6px, 10px); }
+}
+
+/* Scanlines overlay & alarm screen flash */
+body::after {
+  content: ''; position: fixed; inset: 0; z-index: 999; pointer-events: none;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0, 240, 255, 0.015) 2px, rgba(0, 240, 255, 0.015) 4px);
+  transition: background 0.5s;
+}
+
+body.alarm::after {
+  background: 
+    repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255, 51, 102, 0.05) 2px, rgba(255, 51, 102, 0.05) 4px),
+    radial-gradient(circle, rgba(255, 51, 102, 0.28) 0%, rgba(2, 6, 13, 0.6) 80%);
+  animation: flash-alarm 0.8s infinite alternate;
+}
+
+@keyframes flash-alarm {
+  0% { opacity: 0.7; }
+  100% { opacity: 1; }
+}
+
+@keyframes pulse-alert {
+  0% { box-shadow: 0 0 10px rgba(255, 51, 102, 0.2); border-color: rgba(255, 51, 102, 0.4); }
+  100% { box-shadow: 0 0 22px rgba(255, 51, 102, 0.45); border-color: var(--red); }
+}
+
+canvas#grid-canvas {
+  position: fixed; inset: 0; z-index: 2; pointer-events: none;
+}
+
+/* ── HUD CONTAINER ── */
+.hud {
+  position: relative; z-index: 1000; pointer-events: auto;
+  width: 100%; height: 100%;
+  display: grid;
+  grid-template-rows: 72px 1fr 105px;
+  padding: 12px 16px; gap: 12px;
+}
+
+button, input, select, .action-card, .delete-btn, .switch-wrap, .destruct-btn {
+  position: relative; z-index: 1001; pointer-events: auto !important;
+}
+
+/* ── HEADER ── */
+header {
+  background: var(--panel-bg);
+  backdrop-filter: blur(24px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 28px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(0, 240, 255, 0.15);
+}
+
+.logo-block {
+  display: flex; flex-direction: column;
+}
+.logo {
+  font-family: 'Orbitron', sans-serif; font-size: 1.85rem; font-weight: 900;
+  color: var(--cyan); letter-spacing: 7px;
+  text-shadow: 0 0 16px var(--cyan-glow), 0 0 30px rgba(0, 136, 255, 0.3);
+}
+.logo span {
+  font-size: 0.72rem; font-weight: 600; color: var(--ice); letter-spacing: 2px;
+}
+
+.time-block {
+  text-align: center;
+}
+#clock {
+  font-family: 'Orbitron', sans-serif; font-size: 1.55rem; font-weight: 700;
+  color: #ffffff; letter-spacing: 3px; text-shadow: 0 0 14px var(--cyan-glow);
+}
+#date-str {
+  font-size: 0.72rem; color: var(--cyan); letter-spacing: 2.5px; opacity: 0.85; margin-top: 1px;
+}
+
+.status-badge {
+  display: flex; align-items: center; gap: 12px;
+  font-family: 'Orbitron', sans-serif; font-size: 0.68rem; letter-spacing: 2px;
+}
+.dot {
+  width: 10px; height: 10px; border-radius: 50%; background: var(--cyan);
+  box-shadow: 0 0 14px var(--cyan); animation: pulse 1.6s infinite alternate;
+}
+@keyframes pulse { from { opacity: 0.35; } to { opacity: 1; } }
+
+/* ── MONOLITH COLUMNS (TARS segments) ── */
+.monolith {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 22px;
+  height: 100%;
+  overflow: hidden;
+}
+
+.segment {
+  background: var(--panel-bg);
+  backdrop-filter: blur(35px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  display: flex; flex-direction: column; gap: 16px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.85), inset 0 1px 1px rgba(0, 240, 255, 0.08);
+  transition: border-color 0.4s, box-shadow 0.4s;
+}
+
+/* Tactical Corner Brackets */
+.segment::before, .segment::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-color: var(--cyan);
+  border-style: solid;
+  pointer-events: none;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.segment::before {
+  top: -1px; left: -1px;
+  border-width: 2px 0 0 2px;
+}
+.segment::after {
+  bottom: -1px; right: -1px;
+  border-width: 0 2px 2px 0;
+}
+
+.segment:hover {
+  border-color: rgba(0, 240, 255, 0.45);
+  box-shadow: 0 0 32px rgba(0, 240, 255, 0.12), inset 0 0 15px rgba(0, 240, 255, 0.04);
+}
+.segment:hover::before, .segment:hover::after {
+  width: 22px;
+  height: 22px;
+}
+
+body.alarm .segment {
+  border-color: rgba(255, 51, 102, 0.4);
+  box-shadow: 0 0 25px rgba(255, 51, 102, 0.18);
+}
+
+.seg-title {
+  font-family: 'Orbitron', sans-serif; font-size: 0.74rem; color: var(--cyan);
+  letter-spacing: 3px; border-bottom: 1px solid var(--border); padding-bottom: 8px;
+  display: flex; justify-content: space-between; align-items: center;
+  flex-shrink: 0; text-shadow: 0 0 8px var(--cyan-glow);
+}
+.seg-title span {
+  font-size: 0.6rem; color: var(--ice);
+}
+
+.scroll-panel {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-right: 4px;
+}
+.scroll-panel::-webkit-scrollbar { width: 4px; }
+.scroll-panel::-webkit-scrollbar-thumb { background: var(--cyan); border-radius: 2px; }
+
+/* ── SEGMENT 1: Vitals & Calendar ── */
+.vitals-deck {
+  display: flex; flex-direction: column; gap: 11px;
+}
+.diag-row {
+  display: flex; justify-content: space-between; font-size: 0.73rem; margin-bottom: 4px; color: #d0e8f5;
+}
+.bar-wrap {
+  width: 100%; height: 5px; background: rgba(0, 240, 255, 0.08); border-radius: 3px; overflow: hidden;
+}
+.bar-fill {
+  height: 100%; width: 0%; background: linear-gradient(90deg, var(--blue), var(--cyan));
+  border-radius: 3px; transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 10px var(--cyan-glow);
+}
+
+/* Weekly calendar */
+.calendar-block {
+  display: flex; flex-direction: column; gap: 8px; margin-top: 8px;
+}
+.calendar-label {
+  font-size: 0.68rem; letter-spacing: 2px; color: var(--cyan); opacity: 0.85;
+}
+.week-grid {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px;
+}
+.day-box {
+  border: 1px solid rgba(0, 255, 170, 0.2);
+  border-radius: 6px;
+  background: rgba(0, 255, 170, 0.03);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 9px 0;
+  font-family: 'Orbitron', sans-serif;
+  color: var(--green);
+  text-shadow: 0 0 6px rgba(0, 255, 170, 0.2);
+  box-shadow: inset 0 0 6px rgba(0, 255, 170, 0.06);
+  transition: all 0.3s;
+}
+.day-box span {
+  font-size: 0.64rem; font-weight: bold;
+}
+/* Today highlighted in Neon Red */
+.day-box.today {
+  border-color: var(--red);
+  background: rgba(255, 51, 102, 0.1);
+  color: #fff;
+  font-weight: bold;
+  text-shadow: 0 0 10px var(--red-glow);
+  box-shadow: 0 0 16px rgba(255, 51, 102, 0.35), inset 0 0 8px rgba(255, 51, 102, 0.15);
+  animation: today-glow 1.5s infinite alternate;
+}
+@keyframes today-glow {
+  from { box-shadow: 0 0 8px rgba(255, 51, 102, 0.25); border-color: rgba(255, 51, 102, 0.7); }
+  to { box-shadow: 0 0 18px rgba(255, 51, 102, 0.65); border-color: var(--red); }
+}
+
+.countdown-box {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: rgba(0, 240, 255, 0.03); border: 1px dashed var(--border);
+  border-radius: 8px; padding: 10px; margin-top: 8px;
+}
+#countdown-time {
+  font-family: 'Orbitron', sans-serif; font-size: 1.35rem; font-weight: 700;
+  color: var(--amber); text-shadow: 0 0 10px var(--amber-glow);
+}
+
+/* ── SEGMENT 2: Sliders & Actions ── */
+.slider-container {
+  display: flex; flex-direction: column; gap: 7px;
+}
+.slider-label {
+  display: flex; justify-content: space-between; font-size: 0.73rem;
+  letter-spacing: 2px; color: var(--text);
+}
+.slider-val {
+  font-weight: 700; color: var(--cyan); font-family: 'Orbitron', sans-serif;
+}
+.slider-bar {
+  position: relative; width: 100%; display: flex; align-items: center;
+}
+.tars-slider {
+  -webkit-appearance: none;
+  width: 100%; height: 5px; background: rgba(0, 240, 255, 0.1);
+  border-radius: 3px; outline: none; transition: background 0.3s;
+}
+.tars-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 15px; height: 15px; border-radius: 50%;
+  background: var(--cyan); cursor: pointer;
+  box-shadow: 0 0 10px var(--cyan);
+  transition: transform 0.2s, background 0.2s;
+}
+.tars-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.3);
+  background: var(--amber);
+  box-shadow: 0 0 14px var(--amber);
+}
+
+/* Quick action buttons grid */
+.quick-deck {
+  display: flex; flex-direction: column; gap: 8px; margin-top: 8px;
+}
+.quick-label {
+  font-size: 0.68rem; letter-spacing: 2px; color: var(--cyan); opacity: 0.85;
+}
+.quick-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
+}
+.action-card {
+  background: rgba(0, 240, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 11px;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  font-family: 'Orbitron', sans-serif; font-size: 0.7rem; font-weight: bold;
+  color: var(--cyan); cursor: pointer; transition: all 0.3s;
+  box-shadow: inset 0 0 6px rgba(0, 240, 255, 0.06);
+}
+.action-card:hover {
+  border-color: var(--cyan);
+  background: rgba(0, 240, 255, 0.14);
+  box-shadow: 0 0 14px var(--cyan-glow), inset 0 0 10px rgba(0, 240, 255, 0.12);
+  color: #fff;
+  transform: translateY(-2px);
+}
+
+/* ── SEGMENT 3: Productivity Suite (Checklist & Alarms) ── */
+.task-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;
+}
+.task-add-wrap {
+  display: flex; gap: 8px; border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 8px; background: rgba(0,0,0,0.4); margin-bottom: 10px;
+}
+#task-input {
+  flex: 1; background: transparent; border: none; outline: none;
+  color: #fff; font-family: inherit; font-size: 0.8rem;
+}
+.todo-list {
+  display: flex; flex-direction: column; gap: 8px; max-height: 150px; overflow-y: auto;
+}
+.todo-item {
+  display: flex; align-items: center; gap: 10px; background: rgba(0, 240, 255, 0.03);
+  border: 1px solid rgba(0, 240, 255, 0.1); border-radius: 6px; padding: 9px 12px;
+  font-size: 0.78rem; transition: opacity 0.3s, transform 0.3s;
+}
+.todo-item:hover {
+  border-color: var(--border); background: rgba(0,240,255,0.06);
+}
+.todo-item input[type="checkbox"] {
+  accent-color: var(--cyan); cursor: pointer; width: 14px; height: 14px;
+}
+.todo-item .task-text {
+  flex: 1; color: #e1edf5;
+}
+
+.alarms-monitor {
+  display: flex; flex-direction: column; gap: 8px; margin-top: 10px;
+}
+.alarm-item {
+  display: flex; justify-content: space-between; align-items: center;
+  background: rgba(255, 170, 0, 0.04); border: 1px solid rgba(255, 170, 0, 0.18);
+  border-radius: 6px; padding: 8px 12px; font-size: 0.73rem;
+}
+.alarm-item span.time {
+  font-family: 'Orbitron', sans-serif; font-weight: bold; color: var(--amber);
+}
+
+/* ── SEGMENT 4: Tactical Terminal & Self-Destruct Override ── */
+#transcript {
+  flex: 1; overflow-y: auto; background: rgba(1, 4, 10, 0.65);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px; font-family: 'Share Tech Mono', monospace; font-size: 0.8rem; line-height: 1.5;
+}
+
+.console-input-wrap {
+  display: flex; gap: 8px; border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 10px; background: rgba(1, 4, 10, 0.75);
+}
+.console-prompt {
+  color: var(--cyan); font-weight: bold; font-family: 'Orbitron', sans-serif; font-size: 0.82rem; display: flex; align-items: center;
+}
+#console-input {
+  flex: 1; background: transparent; border: none; outline: none;
+  color: #fff; font-family: 'Share Tech Mono', monospace; font-size: 0.82rem;
+}
+
+/* Destruct panel embedded in Segment 4 */
+.destruct-deck {
+  display: flex; align-items: center; justify-content: space-between;
+  border: 1px solid rgba(255, 51, 102, 0.18); background: rgba(255, 51, 102, 0.03);
+  border-radius: 8px; padding: 10px; margin-top: 8px;
+}
+.safety-switch {
+  display: flex; flex-direction: column; gap: 3px;
+}
+.switch-label {
+  font-size: 0.62rem; letter-spacing: 2px; color: var(--amber); font-weight: bold;
+}
+.switch-wrap {
+  position: relative; width: 92px; height: 26px;
+  background: rgba(0, 240, 255, 0.04); border: 1px solid rgba(255, 170, 0, 0.3);
+  border-radius: 13px; overflow: hidden; cursor: pointer;
+}
+.switch-handle {
+  position: absolute; top: 1px; left: 1px; width: 42px; height: 22px;
+  background: rgba(255, 170, 0, 0.2); border: 1px solid var(--amber); border-radius: 11px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.56rem; font-weight: bold; color: var(--amber);
+  transition: left 0.3s, background 0.3s, border-color 0.3s, color 0.3s;
+}
+.switch-wrap.armed .switch-handle {
+  left: 47px; background: rgba(255, 51, 102, 0.3); border-color: var(--red); color: var(--red);
+}
+.destruct-btn {
+  background: rgba(255, 51, 102, 0.06); border: 1px solid rgba(255, 51, 102, 0.22);
+  border-radius: 6px; padding: 7px 14px; font-family: 'Orbitron', sans-serif;
+  font-size: 0.68rem; font-weight: 900; color: rgba(255, 51, 102, 0.45);
+  cursor: not-allowed; transition: all 0.3s;
+}
+.destruct-btn.active {
+  cursor: pointer; background: var(--red); border-color: var(--red); color: #fff;
+  box-shadow: 0 0 16px var(--red-glow); animation: pulse-red 1s infinite alternate;
+}
+@keyframes pulse-red {
+  from { box-shadow: 0 0 8px rgba(255, 51, 102, 0.3); }
+  to { box-shadow: 0 0 18px rgba(255, 51, 102, 0.7); }
+}
+
+/* ── FOOTER ── */
+footer {
+  background: var(--panel-bg);
+  backdrop-filter: blur(24px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 24px;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.85);
+}
+
+.footer-speech {
+  flex: 1; display: flex; flex-direction: column; gap: 3px;
+}
+.footer-speech .label {
+  font-family: 'Orbitron', sans-serif; font-size: 0.56rem; color: var(--cyan); letter-spacing: 2px;
+}
+#current-speech {
+  font-size: 1.02rem; color: #fff; font-weight: 500; min-height: 1.3em;
+}
+
+#waveform {
+  display: flex; align-items: center; gap: 4px; height: 38px; width: 130px; justify-content: center;
+}
+.wave-bar {
+  width: 4px; background: var(--cyan); border-radius: 2px;
+  height: 6px; box-shadow: 0 0 6px var(--cyan-glow);
+  transition: height 0.15s;
+}
+body.speaking #waveform .wave-bar {
+  animation: wave-play 0.2s ease-in-out infinite alternate;
+}
+@keyframes wave-play {
+  from { height: 6px; }
+  to { height: 30px; }
+}
+
+/* ── MODAL PANELS (MACROS, SCHEDULES, AGENT) ── */
+.hud-modal-panel {
+  position: fixed;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 92%; max-width: 620px;
+  max-height: 85vh;
+  background: var(--obsidian-bg);
+  border: 1px solid var(--border-focus);
+  border-radius: 8px;
+  box-shadow: 0 0 40px rgba(0, 240, 255, 0.3);
+  padding: 16px;
+  z-index: 99999;
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+  backdrop-filter: blur(16px);
+  animation: cyber-slide-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.hud-modal-panel.active { display: flex !important; }
+.hud-modal-header {
+  display: flex; justify-content: space-between; align-items: center;
+  border-bottom: 1px solid var(--border); padding-bottom: 8px;
+}
+.hud-modal-title {
+  font-family: 'Orbitron', sans-serif; font-size: 0.82rem; font-weight: 700;
+  letter-spacing: 1.5px; color: var(--cyan);
+}
+.hud-modal-close {
+  background: none; border: 1px solid var(--border); color: #8892b0;
+  font-size: 0.75rem; border-radius: 4px; padding: 2px 8px; cursor: pointer;
+}
+.hud-modal-close:hover { color: #fff; border-color: var(--red); }
+.hud-table { width: 100%; border-collapse: collapse; font-size: 0.72rem; }
+.hud-table th { text-align: left; color: var(--ice); font-family: 'Orbitron'; font-size: 0.56rem; letter-spacing: 1px; padding: 6px; border-bottom: 1px solid var(--border); }
+.hud-table td { padding: 6px; border-bottom: 1px solid rgba(255,255,255,0.05); color: #fff; }
+.hud-btn-mini {
+  background: rgba(0, 240, 255, 0.12); border: 1px solid var(--cyan);
+  border-radius: 4px; color: var(--cyan); font-family: 'Orbitron';
+  font-size: 0.55rem; padding: 3px 8px; cursor: pointer; transition: all 0.2s;
+}
+.hud-btn-mini:hover { background: var(--cyan); color: #000; }
+.hud-btn-del {
+  background: rgba(255, 0, 51, 0.12); border: 1px solid var(--red);
+  border-radius: 4px; color: var(--red); font-family: 'Orbitron';
+  font-size: 0.55rem; padding: 3px 8px; cursor: pointer;
+}
+.hud-btn-del:hover { background: var(--red); color: #fff; }
+
+</style>
+</head>
+<body>
+
+<canvas id="grid-canvas"></canvas>
+
+<div class="hud">
+  <!-- HEADER -->
+  <header>
+    <div class="logo-block">
+      <div class="logo">POINT BREAK</div>
+      <span>TACTICAL MONOLITH // BLACK EDITION</span>
+    </div>
+
+    <!-- Dual Clock & Live Weather Hub -->
+    <div class="time-block" style="display: flex; align-items: center; gap: 20px;">
+      <div style="text-align: right;">
+        <div id="clock">00:00:00</div>
+        <div id="date-str">LOCAL (IST)</div>
+      </div>
+      <div style="border-left: 1px solid var(--border); padding-left: 14px; text-align: left;">
+        <div id="utc-clock" style="font-family: 'Orbitron', sans-serif; font-size: 1.02rem; color: var(--amber); letter-spacing: 2px;">00:00:00 UTC</div>
+        <div id="est-clock" style="font-size: 0.66rem; color: var(--cyan); opacity: 0.85; letter-spacing: 1.5px;">00:00 EST</div>
+      </div>
+    </div>
+
+    <div class="weather-hub" style="display: flex; align-items: center; gap: 10px; background: rgba(0, 240, 255, 0.03); border: 1px solid var(--border); border-radius: 8px; padding: 5px 12px;">
+      <div style="font-size: 1.4rem;" id="weather-icon">🌤️</div>
+      <div>
+        <div style="font-family: 'Orbitron', sans-serif; font-size: 0.85rem; font-weight: bold; color: var(--cyan);" id="weather-temp">28°C</div>
+        <div style="font-size: 0.6rem; color: rgba(255,255,255,0.75);" id="weather-city">New Delhi · <span id="weather-cond" style="color: var(--amber);">Partly Cloudy</span></div>
+      </div>
+    </div>
+
+    <div class="status-badge" style="display: flex; align-items: center; gap: 12px;">
+      <button id="mute-btn" onclick="toggleMute()" style="background: rgba(0, 240, 255, 0.05); border: 1px solid var(--border); border-radius: 8px; color: var(--cyan); padding: 5px 10px; font-family: 'Orbitron', sans-serif; font-size: 0.62rem; font-weight: bold; letter-spacing: 1px; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: all 0.3s; box-shadow: inset 0 0 5px rgba(0,240,255,0.05); outline: none;">
+        <span id="mute-icon">🎙️</span> <span id="mute-text">MIC ACTIVE</span>
+      </button>
+      <button id="reset-btn" onclick="resetTars()" style="background: rgba(255, 170, 0, 0.1); border: 1px solid var(--amber); border-radius: 8px; color: var(--amber); padding: 5px 10px; font-family: 'Orbitron', sans-serif; font-size: 0.62rem; font-weight: bold; letter-spacing: 1px; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: all 0.3s; outline: none;" title="Reset Point Break Configuration & Passkeys">
+        <span>🔄</span> <span>RESET CONFIG</span>
+      </button>
+      <button id="exit-btn" onclick="exitTars()" style="background: rgba(255, 51, 102, 0.15); border: 1px solid var(--red); border-radius: 8px; color: var(--red); padding: 5px 10px; font-family: 'Orbitron', sans-serif; font-size: 0.62rem; font-weight: bold; letter-spacing: 1px; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: all 0.3s; box-shadow: 0 0 10px rgba(255, 51, 102, 0.2); outline: none;" title="Shutdown Point Break completely">
+        <span>✕</span> <span>EXIT</span>
+      </button>
+      <div class="dot" id="status-dot"></div>
+      <div id="sys-status" style="color: var(--cyan)">SYSTEMS NOMINAL</div>
+    </div>
+  </header>
+
+  <!-- MONOLITH SEGMENTS -->
+  <div class="monolith">
+    <!-- SEGMENT 1: Vitals & Calendar -->
+    <div class="segment">
+      <div class="seg-title">DIAGNOSTICS <span>SEG_01</span></div>
+      <div class="scroll-panel">
+        <div class="vitals-deck">
+          <div>
+            <div class="diag-row"><span>CPU LOAD</span><span id="cpu-val">0%</span></div>
+            <div class="bar-wrap"><div class="bar-fill" id="cpu-bar"></div></div>
+          </div>
+          <div>
+            <div class="diag-row"><span>RAM UTILIZATION</span><span id="mem-val">0%</span></div>
+            <div class="bar-wrap"><div class="bar-fill" id="mem-bar"></div></div>
+          </div>
+          <div>
+            <div class="diag-row"><span>BATTERY POWER</span><span id="batt-val">100%</span></div>
+            <div class="bar-wrap"><div class="bar-fill" id="batt-bar" style="background: var(--cyan)"></div></div>
+          </div>
+          <div>
+            <div class="diag-row"><span>WEBCAM RADAR</span><span id="webcam-status" style="color: var(--green); font-weight: bold;">SECURE</span></div>
+            <div class="bar-wrap"><div class="bar-fill" id="webcam-bar" style="background: var(--green); width: 100%;"></div></div>
+          </div>
+          <div>
+            <div class="diag-row"><span>DISK STORAGE</span><span id="disk-val">0%</span></div>
+            <div class="bar-wrap"><div class="bar-fill" id="disk-bar"></div></div>
+          </div>
+          <div>
+            <div class="diag-row"><span>NETWORK LATENCY</span><span id="ping-val">0ms</span></div>
+            <div class="bar-wrap"><div class="bar-fill" id="ping-bar"></div></div>
+          </div>
+        </div>
+
+        <!-- Rotating Radar & Network Telemetry Arc -->
+        <div style="background: rgba(0, 240, 255, 0.03); border: 1px solid var(--border); border-radius: 8px; padding: 9px; margin-top: 10px; display: flex; align-items: center; gap: 10px;">
+          <div style="position: relative; width: 42px; height: 42px; border: 1px solid var(--cyan); border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 10px var(--cyan-glow);">
+            <div style="position: absolute; width: 100%; height: 100%; border-radius: 50%; background: conic-gradient(from 0deg, var(--cyan-glow), transparent 60deg); animation: radarSweep 3s infinite linear;"></div>
+            <div style="font-size: 0.55rem; font-family: 'Orbitron'; color: var(--cyan); z-index: 2;">RADAR</div>
+          </div>
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 2px;">
+            <div style="display: flex; justify-content: space-between; font-size: 0.65rem;">
+              <span style="color: var(--green);">▲ UP: <b id="net-up">0.0 KB/s</b></span>
+              <span style="color: var(--cyan);">▼ DOWN: <b id="net-down">0.0 KB/s</b></span>
+            </div>
+            <div style="font-size: 0.62rem; color: var(--amber); letter-spacing: 1px;">UPTIME: <b id="uptime-val" style="font-family: 'Orbitron'; font-size: 0.7rem; color: #fff;">00:00:00</b></div>
+          </div>
+        </div>
+
+        <!-- INTRUDER ALERT SENTRY PANEL -->
+        <div id="intruder-panel" style="display: none; border: 1px solid var(--red); background: rgba(255, 51, 102, 0.08); border-radius: 8px; padding: 10px; margin-top: 12px; box-shadow: 0 0 15px rgba(255, 51, 102, 0.18); animation: pulse-alert 2s infinite alternate;">
+          <div style="color: var(--red); font-weight: bold; font-family: 'Orbitron', sans-serif; font-size: 0.68rem; margin-bottom: 5px; letter-spacing: 1.5px; display: flex; align-items: center; gap: 5px;">
+            <span>⚠️</span> <span>INTRUDER DETECTED</span>
+          </div>
+          <div style="position: relative; width: 100%; border: 1px solid rgba(255, 51, 102, 0.25); border-radius: 6px; overflow: hidden;">
+            <img id="intruder-img" src="" style="width: 100%; display: block; filter: saturate(1.2) contrast(1.1);"/>
+            <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0, 0, 0, 0.75); color: #fff; font-size: 0.52rem; padding: 3px; text-align: center; font-family: monospace;" id="intruder-time">
+              CAPTURED: 00-00-00 00:00:00
+            </div>
+          </div>
+          <button onclick="clearIntruderAlert()" style="margin-top: 8px; width: 100%; background: rgba(255, 51, 102, 0.15); color: var(--red); border: 1px solid var(--red); border-radius: 6px; padding: 5px; font-family: 'Orbitron', sans-serif; font-size: 0.58rem; font-weight: bold; cursor: pointer; letter-spacing: 1px; transition: all 0.3s; outline: none;" onmouseover="this.style.background='var(--red)'; this.style.color='#000';" onmouseout="this.style.background='rgba(255, 51, 102, 0.15)'; this.style.color='var(--red)';">
+            DISMISS SENTRY LOG
+          </button>
+        </div>
+        
+        <div class="calendar-block">
+          <div class="calendar-label">◈ TEMPORAL SHIFT STRIP</div>
+          <div class="week-grid" id="week-grid">
+            <div class="day-box" id="day-1"><span>M</span></div>
+            <div class="day-box" id="day-2"><span>T</span></div>
+            <div class="day-box" id="day-3"><span>W</span></div>
+            <div class="day-box" id="day-4"><span>T</span></div>
+            <div class="day-box" id="day-5"><span>F</span></div>
+            <div class="day-box" id="day-6"><span>S</span></div>
+            <div class="day-box" id="day-0"><span>S</span></div>
+          </div>
+        </div>
+
+        <div class="countdown-box">
+          <div class="diag-row" style="width:100%; text-align:center; font-size:0.58rem; color: var(--cyan); letter-spacing: 1px;">
+            <span>MEMORY AUTO-PURGE COUNTDOWN</span>
+          </div>
+          <div id="countdown-time">12:00:00</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SEGMENT 2: Core Settings & Quick Action Deck -->
+    <div class="segment">
+      <div class="seg-title">SETTINGS DECK <span>SEG_02</span></div>
+      <div class="scroll-panel">
+        <div class="slider-container">
+          <div class="slider-label"><span>HUMOR LEVEL</span><span class="slider-val" id="humor-txt">75%</span></div>
+          <div class="slider-bar">
+            <input type="range" min="0" max="100" value="75" class="tars-slider" id="slider-humor" oninput="updateSetting('humor', this.value)"/>
+          </div>
+        </div>
+
+        <div class="slider-container">
+          <div class="slider-label"><span>HONESTY LEVEL</span><span class="slider-val" id="honesty-txt">90%</span></div>
+          <div class="slider-bar">
+            <input type="range" min="0" max="100" value="90" class="tars-slider" id="slider-honesty" oninput="updateSetting('honesty', this.value)"/>
+          </div>
+        </div>
+
+        <div class="slider-container">
+          <div class="slider-label"><span>SARCASM LEVEL</span><span class="slider-val" id="sarcasm-txt">60%</span></div>
+          <div class="slider-bar">
+            <input type="range" min="0" max="100" value="60" class="tars-slider" id="slider-sarcasm" oninput="updateSetting('sarcasm', this.value)"/>
+          </div>
+        </div>
+
+        <div class="quick-deck">
+          <div class="quick-label">◈ QUICK SYSTEM OVERRIDES</div>
+          <div class="quick-grid">
+            <div class="action-card" onclick="postCmd('lock screen')">🔒 LOCK</div>
+            <div class="action-card" onclick="postCmd('screenshot')">📸 SNAP</div>
+            <div class="action-card" onclick="postCmd('recycle')">🗑️ PURGE</div>
+            <div class="action-card" onclick="postCmd('weather')">🌦️ METEO</div>
+            <div class="action-card" onclick="postCmd('system diagnostics')">📊 STATS</div>
+            <div class="action-card" onclick="postCmd('read the world news')">🌍 NEWS</div>
+          </div>
+        </div>
+
+        <!-- Live Music Player Card with Equalizer Animation -->
+        <div style="background: rgba(0, 240, 255, 0.03); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-top: 10px; display: flex; flex-direction: column; gap: 7px;">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <span style="font-size: 0.65rem; font-family: 'Orbitron'; color: var(--cyan); letter-spacing: 1.5px;">🎵 MEDIA CHANNEL</span>
+            <div class="eq-bars" id="eq-bars" style="display: flex; align-items: flex-end; gap: 3px; height: 14px;">
+              <div class="eq-bar" style="width: 3px; background: var(--cyan); height: 8px; animation: eqAnim 0.6s infinite alternate ease-in-out;"></div>
+              <div class="eq-bar" style="width: 3px; background: var(--cyan); height: 12px; animation: eqAnim 0.8s infinite alternate ease-in-out 0.1s;"></div>
+              <div class="eq-bar" style="width: 3px; background: var(--cyan); height: 5px; animation: eqAnim 0.5s infinite alternate ease-in-out 0.2s;"></div>
+              <div class="eq-bar" style="width: 3px; background: var(--cyan); height: 10px; animation: eqAnim 0.7s infinite alternate ease-in-out 0.3s;"></div>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 9px;">
+            <div style="width: 34px; height: 34px; border-radius: 6px; background: rgba(0,136,255,0.18); border: 1px solid var(--cyan); display: flex; align-items: center; justify-content: center; font-size: 1.05rem;">🎶</div>
+            <div style="flex: 1; overflow: hidden;">
+              <div id="media-title" style="font-size: 0.73rem; font-weight: bold; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">TARS Audio Stream</div>
+              <div id="media-artist" style="font-size: 0.6rem; color: var(--cyan); opacity: 0.85;">Voice System Standby</div>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-around; background: rgba(0,0,0,0.35); border-radius: 6px; padding: 4px; font-size: 0.88rem; color: var(--cyan);">
+            <span onclick="postCmd('previous track')" style="cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'" title="Previous">⏮</span>
+            <span onclick="postCmd('play pause music')" style="cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'" title="Play/Pause">⏯</span>
+            <span onclick="postCmd('next track')" style="cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'" title="Next">⏭</span>
+            <span onclick="postCmd('mute')" style="cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'" title="Mute">🔊</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SEGMENT 3: Productivity Suite (Checklist & Alarms) -->
+    <div class="segment">
+      <div class="seg-title">PRODUCTIVITY <span>SEG_03</span></div>
+      <div class="scroll-panel">
+        <div>
+          <div class="task-header">
+            <span style="font-size:0.68rem; letter-spacing: 2px; color: var(--cyan); opacity: 0.85;">◈ ACTIVE TODOS</span>
+          </div>
+          <div class="task-add-wrap">
+            <input type="text" id="task-input" placeholder="Add new task directive..." onkeydown="handleAddTask(event)"/>
+          </div>
+          <!-- Alarms & Schedules -->
+          <div style="margin-top: 4px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+              <span style="font-size:0.62rem; letter-spacing: 1.5px; color: var(--cyan);">◈ MONITORING ALARMS</span>
+              <button class="hud-btn-mini" onclick="openSchedulesPanel()" style="font-size:0.52rem; padding:1px 6px;">📅 SCHEDULES</button>
+            </div>
+            <div id="alarms-list" style="display: flex; flex-direction: column; gap: 4px;">
+              <div style="font-size: 0.68rem; color: rgba(255,255,255,0.45); text-align: center;">No active alarms.</div>
+            </div>
+          </div>
+          <div class="todo-list" id="todo-list">
+            <!-- Dynamic checklist items -->
+            <div style="font-size: 0.73rem; color: rgba(255,255,255,0.45); text-align: center; margin-top: 20px;">List is clear.</div>
+          </div>
+        </div>
+        <div class="alarms-monitor">
+          <span style="font-size:0.68rem; letter-spacing: 2px; color: var(--cyan); opacity: 0.85;">◈ MONITORING ALARMS</span>
+          <div id="alarms-list">
+            <!-- Dynamic reminders list -->
+            <div style="font-size: 0.73rem; color: rgba(255,255,255,0.45); text-align: center; margin-top: 10px;">No active alarms.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SEGMENT 4: Tactical Terminal & Destruct -->
+    <div class="segment">
+      <div class="seg-title">TACTICAL TERMINAL <span>SEG_04</span></div>
+      <div id="transcript"></div>
+      <div class="console-input-wrap">
+        <div class="console-prompt">&gt;</div>
+        <input type="text" id="console-input" placeholder="Enter directive..." onkeydown="handleConsole(event)"/>
+      </div>
+
+      <div class="destruct-deck">
+        <div class="safety-switch">
+          <span class="switch-label" id="safety-label">SAFETY ACTIVE</span>
+          <div class="switch-wrap" id="safety-switch" onclick="toggleSafety()">
+            <div class="switch-handle" id="switch-txt">LOCKED</div>
+          </div>
+        </div>
+        <button class="destruct-btn" id="destruct-btn" onclick="triggerDestruct()">DESTRUCT</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <footer>
+    <div class="footer-speech">
+      <div class="label">T.A.R.S. NEURAL VOCALIZATION MATRIX</div>
+      <div id="current-speech">Ready. Standing by for voice prompt or direct command.</div>
+    </div>
+    
+    <div id="waveform">
+      <div class="wave-bar" style="animation-delay: 0s"></div>
+      <div class="wave-bar" style="animation-delay: 0.1s"></div>
+      <div class="wave-bar" style="animation-delay: 0.2s"></div>
+      <div class="wave-bar" style="animation-delay: 0.3s"></div>
+      <div class="wave-bar" style="animation-delay: 0.15s"></div>
+      <div class="wave-bar" style="animation-delay: 0.25s"></div>
+      <div class="wave-bar" style="animation-delay: 0.05s"></div>
+    </div>
+  </footer>
+</div>
+
+<script>
+// ── CLOCK & DUAL TIMEZONES ────────────────────────────────────────
+function updateClock(){
+  const now = new Date();
+  document.getElementById('clock').textContent = now.toLocaleTimeString('en-US', {hour12:false});
+  document.getElementById('date-str').textContent = now.toLocaleDateString('en-US', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+  }).toUpperCase();
+
+  // UTC Clock
+  const utcHours = String(now.getUTCHours()).padStart(2, '0');
+  const utcMins = String(now.getUTCMinutes()).padStart(2, '0');
+  const utcSecs = String(now.getUTCSeconds()).padStart(2, '0');
+  document.getElementById('utc-clock').textContent = `${utcHours}:${utcMins}:${utcSecs} UTC`;
+
+  // EST Clock (UTC-5)
+  const estDate = new Date(now.getTime() - (5 * 3600 * 1000));
+  const estHours = String(estDate.getUTCHours()).padStart(2, '0');
+  const estMins = String(estDate.getUTCMinutes()).padStart(2, '0');
+  document.getElementById('est-clock').textContent = `${estHours}:${estMins} EST`;
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ── 12-HOUR PURGE COUNTDOWN ──────────────────────────────────────
+let startTime = Date.now();
+const twelveHoursMs = 12 * 60 * 60 * 1000;
+function updateCountdown() {
+  const elapsed = (Date.now() - startTime) % twelveHoursMs;
+  const remaining = twelveHoursMs - elapsed;
+  
+  const h = String(Math.floor(remaining / 3600000)).padStart(2, '0');
+  const m = String(Math.floor((remaining % 3600000) / 60000)).padStart(2, '0');
+  const s = String(Math.floor((remaining % 60000) / 1000)).padStart(2, '0');
+  
+  document.getElementById('countdown-time').textContent = `${h}:${m}:${s}`;
+}
+setInterval(updateCountdown, 1000);
+updateCountdown();
+
+// ── DYNAMIC WEEKLY CALENDAR (Today Red, others Green) ──────────────
+function updateCalendar() {
+  const day = new Date().getDay(); // 0 is Sun, 1 is Mon...
+  for (let i = 0; i < 7; i++) {
+    const box = document.getElementById(`day-${i}`);
+    if (box) {
+      if (i === day) {
+        box.classList.add('today');
+      } else {
+        box.classList.remove('today');
+      }
+    }
+  }
+}
+updateCalendar();
+
+// ── BACKGROUND CANVAS: SCI-FI HOLOGRAPHIC PODIUM, BRAIN CORE, TERRAIN & SINE WAVES ──────
+const canvas = document.getElementById('grid-canvas');
+const ctx = canvas.getContext('2d');
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+let animStep = 0;
+
+function drawBackgroundHUD() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  animStep += 0.02;
+
+  const w = canvas.width;
+  const h = canvas.height;
+
+  // 1. SINE WAVES & FREQUENCY WAVEFORM CURVES (Across Background)
+  ctx.save();
+  ctx.strokeStyle = 'rgba(0, 240, 255, 0.08)';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  for (let x = 0; x < w; x += 5) {
+    const y = h * 0.45 + Math.sin(x * 0.005 + animStep) * 35 + Math.cos(x * 0.002 - animStep * 0.5) * 20;
+    if (x === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(0, 136, 255, 0.05)';
+  ctx.lineWidth = 1.0;
+  ctx.beginPath();
+  for (let x = 0; x < w; x += 6) {
+    const y = h * 0.5 + Math.sin(x * 0.008 - animStep * 1.2) * 45;
+    if (x === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  ctx.restore();
+
+  // 2. SCI-FI HOLOGRAPHIC PODIUM / PEDESTAL (Center Bottom)
+  ctx.save();
+  const cx = w * 0.5;
+  const cy = h * 0.88;
+  const rx = 240;
+  const ry = 60;
+
+  // Outer glowing pedestal rings
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(0, 240, 255, 0.25)';
+  ctx.lineWidth = 2;
+  ctx.shadowColor = 'rgba(0, 240, 255, 0.4)';
+  ctx.shadowBlur = 15;
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.ellipse(cx, cy - 12, rx * 0.82, ry * 0.82, 0, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(0, 136, 255, 0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Pedestal base cylinder gradient
+  const grad = ctx.createLinearGradient(cx, cy - 12, cx, cy + 30);
+  grad.addColorStop(0, 'rgba(0, 240, 255, 0.15)');
+  grad.addColorStop(1, 'rgba(0, 136, 255, 0.02)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI);
+  ctx.lineTo(cx - rx, cy - 12);
+  ctx.ellipse(cx, cy - 12, rx, ry, 0, Math.PI, 0, true);
+  ctx.closePath();
+  ctx.fill();
+
+  // Rotating laser ticks on pedestal
+  const ticks = 24;
+  for (let i = 0; i < ticks; i++) {
+    const angle = (i / ticks) * Math.PI * 2 + animStep * 0.4;
+    const tx = cx + Math.cos(angle) * (rx + 10);
+    const ty = cy + Math.sin(angle) * (ry + 10);
+    ctx.fillStyle = 'rgba(0, 240, 255, 0.4)';
+    ctx.fillRect(tx - 1.5, ty - 4, 3, 8);
+  }
+  ctx.restore();
+
+  // 3. GLOWING WIREFRAME NEURAL BRAIN / CORE (Top Right Background Visual)
+  ctx.save();
+  const bx = w * 0.78;
+  const by = h * 0.22;
+  const br = 65;
+
+  ctx.strokeStyle = 'rgba(0, 240, 255, 0.18)';
+  ctx.lineWidth = 1;
+  ctx.shadowColor = 'rgba(0, 240, 255, 0.3)';
+  ctx.shadowBlur = 10;
+
+  // Orbital rings around brain
+  for (let r = 0; r < 4; r++) {
+    ctx.beginPath();
+    ctx.ellipse(bx, by, br + r * 14, (br + r * 14) * 0.4, (animStep * 0.3 + r) * 0.5, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Neural nodes inside brain core
+  ctx.fillStyle = 'rgba(0, 240, 255, 0.35)';
+  for (let n = 0; n < 12; n++) {
+    const nx = bx + Math.sin(n * 1.5 + animStep) * 32;
+    const ny = by + Math.cos(n * 2.1 - animStep * 0.8) * 24;
+    ctx.beginPath();
+    ctx.arc(nx, ny, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // 4. WIREFRAME 3D TERRAIN LANDSCAPE MESH (Bottom Left Background)
+  ctx.save();
+  ctx.strokeStyle = 'rgba(0, 240, 255, 0.07)';
+  ctx.lineWidth = 0.8;
+  const terrX = w * 0.05;
+  const terrY = h * 0.72;
+  const cols = 12;
+  const rows = 8;
+  const spacing = 18;
+
+  for (let r = 0; r < rows; r++) {
+    ctx.beginPath();
+    for (let c = 0; c < cols; c++) {
+      const px = terrX + c * spacing + r * 6;
+      const py = terrY + r * spacing * 0.6 - Math.sin(c * 0.6 + animStep) * 8;
+      if (c === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // 5. SCI-FI SCANNING TELEMETRY TEXT BLOCK
+  ctx.save();
+  ctx.font = '11px "Orbitron", monospace';
+  ctx.fillStyle = 'rgba(0, 240, 255, 0.25)';
+  ctx.fillText("SCANNING", w * 0.42, h * 0.28);
+  ctx.fillText("SCANNING", w * 0.42, h * 0.30);
+  ctx.fillText("SCANNING", w * 0.42, h * 0.32);
+  ctx.restore();
+
+  requestAnimationFrame(drawBackgroundHUD);
+}
+drawBackgroundHUD();
+
+// ── SAFETY OVERRIDE SWITCH ───────────────────────────────────────
+let safetyArmed = false;
+function toggleSafety() {
+  const sw = document.getElementById('safety-switch');
+  const lbl = document.getElementById('safety-label');
+  const btn = document.getElementById('destruct-btn');
+  const handle = document.getElementById('switch-txt');
+  
+  safetyArmed = !safetyArmed;
+  if (safetyArmed) {
+    sw.classList.add('armed');
+    lbl.textContent = 'SYSTEM ARMED';
+    lbl.style.color = 'var(--red)';
+    handle.textContent = 'ARMED';
+    btn.classList.add('active');
+  } else {
+    sw.classList.remove('armed');
+    lbl.textContent = 'SAFETY ACTIVE';
+    lbl.style.color = 'var(--amber)';
+    handle.textContent = 'LOCKED';
+    btn.classList.remove('active');
+  }
+}
+
+// ── UNIVERSAL API BASE RESOLVER ─────────────────────────────────
+function getApiBase() {
+  if (window.location.protocol === 'file:' || !window.location.port) {
+    return 'http://127.0.0.1:8000';
+  }
+  return '';
+}
+
+// ── TRIGGER SELF DESTRUCT ────────────────────────────────────────
+async function triggerDestruct() {
+  if (!safetyArmed) return;
+  
+  document.body.classList.add('alarm');
+  
+  try {
+    const res = await fetch(getApiBase() + '/self_destruct', { method: 'POST' });
+    await res.json();
+    
+    // Safety auto reset after 12 seconds
+    setTimeout(() => {
+      document.body.classList.remove('alarm');
+      toggleSafety();
+      startTime = Date.now();
+    }, 12000);
+  } catch (e) {
+    document.body.classList.remove('alarm');
+  }
+}
+
+// ── UPDATE PARAMETERS / SLIDERS ─────────────────────────────────
+async function updateSetting(type, value) {
+  document.getElementById(`${type}-txt`).textContent = `${value}%`;
+  try {
+    const body = new URLSearchParams();
+    body.append('type', type);
+    body.append('value', value);
+    
+    await fetch(getApiBase() + '/update_setting', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body
+    });
+  } catch (e) {
+    console.error("Failed to update settings:", e);
+  }
+}
+
+// ── QUICK SYSTEM COMMANDS ────────────────────────────────────────
+async function postCmd(cmdString) {
+  try {
+    const body = new URLSearchParams();
+    body.append('query', cmdString);
+    await fetch(getApiBase() + '/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body
+    });
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// ── CHECKLIST TASK MANAGER ───────────────────────────────────────
+async function handleAddTask(e) {
+  if (e.key === 'Enter') {
+    const inputEl = document.getElementById('task-input');
+    const task = inputEl.value.trim();
+    if (!task) return;
+    inputEl.value = '';
+    
+    try {
+      const body = new URLSearchParams();
+      body.append('task', task);
+      await fetch(getApiBase() + '/add_todo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  }
+}
+
+async function completeTask(index) {
+  try {
+    const body = new URLSearchParams();
+    body.append('index', index);
+    await fetch(getApiBase() + '/complete_todo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body
+    });
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function deleteTask(index) {
+  try {
+    const body = new URLSearchParams();
+    body.append('index', index);
+    await fetch(getApiBase() + '/delete_todo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body
+    });
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function toggleMute() {
+  try {
+    await fetch(getApiBase() + '/toggle_mute', { method: 'POST' });
+  } catch (e) {
+    console.error("Failed to toggle mute:", e);
+  }
+}
+
+async function clearIntruderAlert() {
+  try {
+    await fetch(getApiBase() + '/clear_intruder_alert', { method: 'POST' });
+  } catch (e) {
+    console.error("Failed to clear intruder alert:", e);
+  }
+}
+
+// ── STATUS POLLING LOOP ─────────────────────────────────────────
+let lastSpeech = "";
+let lastUserMsg = "";
+
+async function pollStatus() {
+  try {
+    const r = await fetch(getApiBase() + '/jarvis_status.json?t=' + Date.now());
+    const d = await r.json();
+    
+    // Vocalizations logs
+    if (d.jarvis_says && d.jarvis_says !== lastSpeech) {
+      document.getElementById('current-speech').textContent = d.jarvis_says;
+      addMsg('TARS', d.jarvis_says, 'var(--cyan)');
+      lastSpeech = d.jarvis_says;
+    }
+    if (d.user_said && d.user_said !== lastUserMsg) {
+      addMsg('DAKSH', d.user_said, 'var(--green)');
+      lastUserMsg = d.user_said;
+    }
+    
+    // Wave animation sync
+    if (d.status === 'speaking') {
+      document.body.classList.add('speaking');
+    } else {
+      document.body.classList.remove('speaking');
+    }
+
+    // Mic Mute state sync
+    const muteBtn = document.getElementById('mute-btn');
+    const muteIcon = document.getElementById('mute-icon');
+    const muteText = document.getElementById('mute-text');
+    if (muteBtn) {
+      if (d.mic_muted) {
+        muteBtn.style.color = 'var(--red)';
+        muteBtn.style.borderColor = 'var(--red)';
+        muteBtn.style.background = 'rgba(255, 51, 102, 0.12)';
+        muteBtn.style.boxShadow = '0 0 14px var(--red-glow)';
+        muteIcon.textContent = '🔇';
+        muteText.textContent = 'MIC MUTED';
+      } else {
+        muteBtn.style.color = 'var(--cyan)';
+        muteBtn.style.borderColor = 'var(--border)';
+        muteBtn.style.background = 'rgba(0, 240, 255, 0.05)';
+        muteBtn.style.boxShadow = 'inset 0 0 5px rgba(0,240,255,0.05)';
+        muteIcon.textContent = '🎙️';
+        muteText.textContent = 'MIC ACTIVE';
+      }
+    }
+
+    // Intruder Alert state sync
+    const intruderPanel = document.getElementById('intruder-panel');
+    if (intruderPanel) {
+      if (d.intruder_alert) {
+        document.getElementById('intruder-img').src = getApiBase() + '/intruder_log.jpg?t=' + new Date().getTime();
+        document.getElementById('intruder-time').textContent = 'CAPTURED: ' + d.intruder_alert.timestamp;
+        intruderPanel.style.display = 'block';
+      } else {
+        intruderPanel.style.display = 'none';
+      }
+    }
+
+    // Webcam radar state sync
+    const camStatus = document.getElementById('webcam-status');
+    const camBar = document.getElementById('webcam-bar');
+    if (camStatus && camBar) {
+      if (d.status === 'scanning') {
+        camStatus.textContent = 'SCANNING...';
+        camStatus.style.color = 'var(--amber)';
+        camBar.style.background = 'var(--amber)';
+        camBar.style.width = '100%';
+      } else if (d.status === 'locked') {
+        camStatus.textContent = 'ACCESS LOCKED';
+        camStatus.style.color = 'var(--red)';
+        camBar.style.background = 'var(--red)';
+        camBar.style.width = '100%';
+      } else {
+        camStatus.textContent = 'OWNER SECURED';
+        camStatus.style.color = 'var(--green)';
+        camBar.style.background = 'var(--green)';
+        camBar.style.width = '100%';
+      }
+    }
+
+    // CPU / Memory / Disk / Ping updates
+    if (d.cpu != null && document.getElementById('cpu-val')) {
+      document.getElementById('cpu-val').textContent = Math.round(d.cpu) + '%';
+      document.getElementById('cpu-bar').style.width = Math.round(d.cpu) + '%';
+    }
+    if (d.mem != null && document.getElementById('mem-val')) {
+      document.getElementById('mem-val').textContent = Math.round(d.mem) + '%';
+      document.getElementById('mem-bar').style.width = Math.round(d.mem) + '%';
+    }
+    if (d.disk != null && document.getElementById('disk-val')) {
+      document.getElementById('disk-val').textContent = Math.round(d.disk) + '%';
+      document.getElementById('disk-bar').style.width = Math.round(d.disk) + '%';
+    }
+    if (d.ping != null && document.getElementById('ping-val')) {
+      const ms = d.ping;
+      document.getElementById('ping-val').textContent = ms + 'ms';
+      document.getElementById('ping-bar').style.width = Math.min((ms / 1000) * 100, 100) + '%';
+      document.getElementById('ping-bar').style.background = ms > 500 ? 'var(--red)' : ms > 150 ? 'var(--amber)' : 'var(--cyan)';
+    }
+
+    // Network & Telemetry Arc
+    if (d.net_up_kbps != null && document.getElementById('net-up')) {
+      document.getElementById('net-up').textContent = d.net_up_kbps + ' KB/s';
+    }
+    if (d.net_down_kbps != null && document.getElementById('net-down')) {
+      document.getElementById('net-down').textContent = d.net_down_kbps + ' KB/s';
+    }
+    if (d.uptime != null && document.getElementById('uptime-val')) {
+      document.getElementById('uptime-val').textContent = d.uptime;
+    }
+
+    // Weather Hub
+    if (d.weather_temp && document.getElementById('weather-temp')) document.getElementById('weather-temp').textContent = d.weather_temp;
+    if (d.weather_cond && document.getElementById('weather-cond')) document.getElementById('weather-cond').textContent = d.weather_cond;
+    if (d.weather_city && document.getElementById('weather-city')) document.getElementById('weather-city').textContent = d.weather_city;
+
+    // Media Channel & Equalizer
+    if (d.media_title && document.getElementById('media-title')) document.getElementById('media-title').textContent = d.media_title;
+    if (d.media_artist && document.getElementById('media-artist')) document.getElementById('media-artist').textContent = d.media_artist;
+    const eqBars = document.getElementById('eq-bars');
+    if (eqBars) {
+      eqBars.style.opacity = d.media_playing ? '1' : '0.35';
+    }
+
+    // Settings sliders sync
+    if (d.humor != null && document.getElementById('slider-humor')) {
+      document.getElementById('slider-humor').value = d.humor;
+      document.getElementById('humor-txt').textContent = d.humor + '%';
+    }
+    if (d.honesty != null && document.getElementById('slider-honesty')) {
+      document.getElementById('slider-honesty').value = d.honesty;
+      document.getElementById('honesty-txt').textContent = d.honesty + '%';
+    }
+    if (d.sarcasm != null && document.getElementById('slider-sarcasm')) {
+      document.getElementById('slider-sarcasm').value = d.sarcasm;
+      document.getElementById('sarcasm-txt').textContent = d.sarcasm + '%';
+    }
+
+    // Battery update
+    if (d.battery != null && document.getElementById('batt-val')) {
+      const pct = Math.round(d.battery);
+      document.getElementById('batt-val').textContent = pct + '%' + (d.plugged ? ' ⚡' : '');
+      document.getElementById('batt-bar').style.width = pct + '%';
+      document.getElementById('batt-bar').style.background = pct < 20 ? 'var(--red)' : pct < 50 ? 'var(--amber)' : 'var(--cyan)';
+    }
+
+    // Render active TODOs checklist
+    if (d.todos != null && document.getElementById('todo-list')) {
+      const todoListEl = document.getElementById('todo-list');
+      if (d.todos.length === 0) {
+        todoListEl.innerHTML = `<div style="font-size: 0.73rem; color: rgba(255,255,255,0.45); text-align: center; margin-top: 20px;">List is clear.</div>`;
+      } else {
+        todoListEl.innerHTML = d.todos.map(todo => `
+          <div class="todo-item" id="todo-${todo.index}" style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
+              <input type="checkbox" onclick="completeTask(${todo.index})"/>
+              <span class="task-text">${escapeHTML(todo.task)}</span>
+            </div>
+            <span class="delete-btn" onclick="deleteTask(${todo.index})" style="color: rgba(255, 51, 102, 0.6); cursor: pointer; font-weight: bold; font-size: 1.15rem; padding: 0 4px; transition: color 0.2s;" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='rgba(255, 51, 102, 0.6)'">&times;</span>
+          </div>
+        `).join('');
+      }
+    }
+
+    // Render active alarms & reminders
+    if (d.reminders != null && document.getElementById('alarms-list')) {
+      const alarmsListEl = document.getElementById('alarms-list');
+      if (d.reminders.length === 0) {
+        alarmsListEl.innerHTML = `<div style="font-size: 0.73rem; color: rgba(255,255,255,0.45); text-align: center; margin-top: 10px;">No active alarms.</div>`;
+      } else {
+        alarmsListEl.innerHTML = d.reminders.map(rem => `
+          <div class="alarm-item">
+            <span>⏰ ${escapeHTML(rem.msg)}</span>
+            <span class="time">${escapeHTML(rem.time)}</span>
+          </div>
+        `).join('');
+      }
+    }
+    
+    // Warnings override overlay
+    const scanning = d.scanning || false;
+    if (scanning) {
+      document.body.classList.add('alarm');
+    } else if (!safetyArmed) {
+      document.body.classList.remove('alarm');
+    }
+    
+    // Baymax Balalala Fist Bump Toast Trigger
+    if (d.status === 'fistbump' || d.balalala === true || d.last_gesture === 'BALALALA!') {
+      showBalalalaToast();
+    }
+    
+  } catch (e) {
+    console.error("Polling error:", e);
+  }
+  setTimeout(pollStatus, 700);
+}
+pollStatus();
+
+// Helper to escape HTML characters
+function escapeHTML(str) {
+  return str.replace(/[&<>'"]/g, 
+    tag => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      "'": '&#39;',
+      '"': '&quot;'
+    }[tag] || tag)
+  );
+}
+
+// ── CONSOLE COMMAND INPUT ───────────────────────────────────────
+async function handleConsole(e) {
+  if (e.key === 'Enter') {
+    const inputEl = document.getElementById('console-input');
+    const cmd = inputEl.value.trim();
+    if (!cmd) return;
+    
+    addMsg('DAKSH', cmd, 'var(--green)');
+    inputEl.value = '';
+    
+    try {
+      const body = new URLSearchParams();
+      body.append('query', cmd);
+      await fetch(getApiBase() + '/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body
+      });
+    } catch (e) {
+      console.error("Failed to execute console command:", e);
+    }
+  }
+}
+
+// ── UTILITY MSGS ────────────────────────────────────────────────
+function addMsg(sender, text, color) {
+  const trans = document.getElementById('transcript');
+  const wrap = document.createElement('div');
+  wrap.style.marginBottom = '8px';
+  wrap.style.animation = 'fadeIn 0.3s ease';
+  wrap.innerHTML = `<b style="color: ${color}; font-family: 'Orbitron'; font-size: 0.65rem;">${sender}:</b> <span style="color: #fff;">${escapeHTML(text)}</span>`;
+  trans.appendChild(wrap);
+  trans.scrollTop = trans.scrollHeight;
+  if (trans.children.length > 50) {
+    trans.removeChild(trans.children[0]);
+  }
+}
+
+// ── EXIT & RESET HANDLERS ──────────────────────────────────────
+async function exitTars() {
+  if (confirm("Are you sure you want to exit TARS completely?")) {
+    addMsg('SYSTEM', 'Initiating full system shutdown...', 'var(--red)');
+    try {
+      await fetch(getApiBase() + '/shutdown', { method: 'POST' });
+    } catch(e){}
+    setTimeout(() => {
+      document.body.innerHTML = "<div style='display:flex;height:100vh;align-items:center;justify-content:center;font-family:Orbitron;color:#ff3366;font-size:1.5rem;'>TARS HAS SHUT DOWN CLEANLY. YOU MAY CLOSE THIS TAB.</div>";
+    }, 1000);
+  }
+}
+
+async function resetTars() {
+  if (confirm("Reset TARS configuration, security passkeys, and facial models?")) {
+    addMsg('SYSTEM', 'Resetting TARS configuration...', 'var(--amber)');
+    try {
+      await fetch(getApiBase() + '/reset_tars', { method: 'POST' });
+    } catch(e){}
+    setTimeout(() => {
+      alert("TARS reset complete. Please restart TARS or refresh the page.");
+      location.reload();
+    }, 2000);
+  }
+}
+
+let balalalaTimer = null;
+function showBalalalaToast() {
+  const toast = document.getElementById('balalala-toast');
+  if (!toast) return;
+  toast.style.display = 'block';
+  if (balalalaTimer) clearTimeout(balalalaTimer);
+  balalalaTimer = setTimeout(() => {
+    toast.style.display = 'none';
+  }, 3500);
+}
+
+const keyframe = document.createElement('style');
+keyframe.textContent = `
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes popBounce { 0% { opacity: 0; transform: translate(-50%, -40%) scale(0.7); } 50% { transform: translate(-50%, -50%) scale(1.08); } 100% { opacity: 1; transform: translate(-50%, -50%) scale(1.0); } }
+`;
+document.head.appendChild(keyframe);
+
+// ── INTERACTIVE MACRO PLAYBOOKS MANAGER ─────────────────────────
+function openMacroPanel() {
+  document.getElementById('macro-panel').classList.add('active');
+  fetchMacros();
+}
+function closeMacroPanel() {
+  document.getElementById('macro-panel').classList.remove('active');
+}
+
+async function fetchMacros() {
+  const tbody = document.getElementById('macro-list-tbody');
+  try {
+    const res = await fetch(getApiBase() + '/api/list_macros');
+    const data = await res.json();
+
+    // Tri-Core Sub-Agent Swarm Telemetry
+    if (data.swarm_state && data.swarm_state.active_agent && data.swarm_state.active_agent !== "STANDBY") {
+      const agBadge = document.getElementById('footer-agent-badge');
+      const agVal = document.getElementById('footer-agent-val');
+      if (agBadge) { agBadge.textContent = data.swarm_state.active_agent + ' ACTIVE'; agBadge.style.color = 'var(--cyan)'; }
+      if (agVal) { agVal.textContent = data.swarm_state.last_agent_event || 'Processing task'; }
+    }
+
+    const macros = data.macros || [];
+    if (macros.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#888; padding:12px;">No saved macros found. Click Record Macro to create one!</td></tr>';
+      return;
+    }
+    tbody.innerHTML = macros.map(m => {
+      const name = typeof m === 'object' ? m.name : m;
+      const updated = (typeof m === 'object' && m.updated) ? m.updated : 'Active';
+      return `
+        <tr id="macro-row-${name}">
+          <td style="font-weight:bold; color:var(--cyan); font-family:'Orbitron'; font-size:0.68rem;">${name}</td>
+          <td style="color:#8892b0; font-size:0.62rem;">${updated}</td>
+          <td style="text-align:right;">
+            <button class="hud-btn-mini" onclick="runMacro('${name}', this)" style="margin-right:4px;">▶ RUN</button>
+            <button class="hud-btn-del" onclick="deleteMacro('${name}', this)">🗑 DEL</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  } catch(e) {
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--red);">Error loading macros.</td></tr>';
+  }
+}
+
+async function handleMacroRecordToggle() {
+  const btn = document.getElementById('macro-record-toggle-btn');
+  const statusEl = document.getElementById('macro-record-status');
+  if (!isRecordingMacro) {
+    const nameInput = document.getElementById('new-macro-name');
+    const mName = nameInput.value.trim() || prompt("Enter macro playbook name:", "quick_workflow") || "macro";
+    try {
+      const res = await fetch(getApiBase() + `/api/start_macro?name=${encodeURIComponent(mName)}`, { method: 'POST' });
+      const data = await res.json();
+
+    // Tri-Core Sub-Agent Swarm Telemetry
+    if (data.swarm_state && data.swarm_state.active_agent && data.swarm_state.active_agent !== "STANDBY") {
+      const agBadge = document.getElementById('footer-agent-badge');
+      const agVal = document.getElementById('footer-agent-val');
+      if (agBadge) { agBadge.textContent = data.swarm_state.active_agent + ' ACTIVE'; agBadge.style.color = 'var(--cyan)'; }
+      if (agVal) { agVal.textContent = data.swarm_state.last_agent_event || 'Processing task'; }
+    }
+
+      if (res.ok) {
+        isRecordingMacro = true;
+        btn.textContent = '⏹️ STOP RECORDING';
+        btn.style.background = 'rgba(255, 0, 51, 0.4)';
+        statusEl.style.display = 'block';
+        document.getElementById('footer-macro-badge').textContent = 'RECORDING';
+        document.getElementById('footer-macro-badge').style.color = 'var(--red)';
+        addMsg('MACRO', `🔴 Recording started for '${mName}'. Perform actions on your screen.`, 'var(--red)');
+      }
+    } catch(e){}
+  } else {
+    try {
+      const res = await fetch(getApiBase() + '/api/stop_macro', { method: 'POST' });
+      isRecordingMacro = false;
+      btn.textContent = '⏺️ RECORD MACRO';
+      btn.style.background = 'rgba(255, 0, 51, 0.2)';
+      statusEl.style.display = 'none';
+      document.getElementById('footer-macro-badge').textContent = 'READY';
+      document.getElementById('footer-macro-badge').style.color = 'var(--amber)';
+      addMsg('MACRO', '✅ Macro recording stopped and compiled to Python playbook.', 'var(--green)');
+      fetchMacros();
+    } catch(e){}
+  }
+}
+
+async function runMacro(name) {
+  addMsg('MACRO', `▶ Executing macro playbook '${name}'...`, 'var(--cyan)');
+  try {
+    await fetch(getApiBase() + `/api/run_macro?name=${encodeURIComponent(name)}`, { method: 'POST' });
+  } catch(e){}
+}
+
+async function runMacro(name, btn) {
+  if (btn) { btn.textContent = 'EXECUTING...'; btn.style.background = 'var(--green)'; }
+  addMsg('MACRO', `▶ Executing macro playbook '${name}'...`, 'var(--cyan)');
+  try {
+    await fetch(getApiBase() + `/api/run_macro?name=${encodeURIComponent(name)}`, { method: 'POST' });
+  } catch(e){}
+  setTimeout(() => { if (btn) { btn.textContent = '▶ RUN'; btn.style.background = ''; } }, 1200);
+}
+
+async function deleteMacro(name, btn) {
+  if (!confirm(`Are you sure you want to delete macro '${name}'?`)) return;
+  // Optimistic 0ms UI deletion:
+  const row = document.getElementById(`macro-row-${name}`) || (btn ? btn.closest('tr') : null);
+  if (row) {
+    row.style.opacity = '0.2';
+    row.style.transition = 'all 0.2s';
+    setTimeout(() => row.remove(), 220);
+  }
+  addMsg('MACRO', `🗑 Macro '${name}' deleted.`, 'var(--amber)');
+  try {
+    await fetch(getApiBase() + `/api/delete_macro?name=${encodeURIComponent(name)}`, { method: 'POST' });
+  } catch(e){}
+}
+
+// ── INTERACTIVE AUTOMATION SCHEDULES MANAGER ─────────────────────
+function openSchedulesPanel() {
+  document.getElementById('schedules-panel').classList.add('active');
+  fetchSchedules();
+}
+function closeSchedulesPanel() {
+  document.getElementById('schedules-panel').classList.remove('active');
+}
+
+async function fetchSchedules() {
+  const tbody = document.getElementById('schedules-list-tbody');
+  try {
+    const res = await fetch(getApiBase() + '/api/schedules');
+    const data = await res.json();
+
+    // Tri-Core Sub-Agent Swarm Telemetry
+    if (data.swarm_state && data.swarm_state.active_agent && data.swarm_state.active_agent !== "STANDBY") {
+      const agBadge = document.getElementById('footer-agent-badge');
+      const agVal = document.getElementById('footer-agent-val');
+      if (agBadge) { agBadge.textContent = data.swarm_state.active_agent + ' ACTIVE'; agBadge.style.color = 'var(--cyan)'; }
+      if (agVal) { agVal.textContent = data.swarm_state.last_agent_event || 'Processing task'; }
+    }
+
+    const schedules = data.schedules || [];
+    if (schedules.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#888; padding:12px;">No active schedules. Add one above!</td></tr>';
+      return;
+    }
+    tbody.innerHTML = schedules.map(s => {
+      const schedDesc = s.is_interval ? `Every ${s.schedule}m` : `Daily at ${s.schedule}`;
+      return `
+        <tr id="sched-row-${s.id}">
+          <td style="color:var(--cyan); font-family:'Orbitron'; font-weight:bold; font-size:0.65rem;">#${s.id}</td>
+          <td style="color:var(--amber); font-weight:bold;">${schedDesc}</td>
+          <td style="color:var(--ice); text-transform:uppercase; font-size:0.6rem;">${s.type}</td>
+          <td style="color:#fff; font-size:0.68rem;">${s.data}</td>
+          <td style="text-align:right;">
+            <button class="hud-btn-mini" onclick="runSchedule('${s.id}', this)" style="margin-right:4px;">▶ RUN</button>
+            <button class="hud-btn-del" onclick="deleteSchedule('${s.id}', this)">🗑 DEL</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  } catch(e) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--red);">Error loading schedules.</td></tr>';
+  }
+}
+
+async function submitNewSchedule() {
+  const directive = document.getElementById('sched-directive').value.trim();
+  const timeOrInterval = document.getElementById('sched-time').value.trim();
+  const type = document.getElementById('sched-type').value;
+  if (!directive || !timeOrInterval) {
+    alert('Please enter both an AI Directive and a Time/Interval (e.g. 30 for every 30m, or 08:30 for daily time).');
+    return;
+  }
+  try {
+    const res = await fetch(getApiBase() + `/api/add_schedule?type=${encodeURIComponent(type)}&schedule=${encodeURIComponent(timeOrInterval)}&data=${encodeURIComponent(directive)}`, { method: 'POST' });
+    if (res.ok) {
+      document.getElementById('sched-directive').value = '';
+      document.getElementById('sched-time').value = '';
+      addMsg('SCHEDULER', `➕ Added schedule: ${type} (${timeOrInterval}) - ${directive}`, 'var(--green)');
+      fetchSchedules();
+    }
+  } catch(e){}
+}
+
+async function runSchedule(id) {
+  addMsg('SCHEDULER', `▶ Manually triggering schedule #${id}...`, 'var(--cyan)');
+  try {
+    await fetch(getApiBase() + `/api/run_schedule?id=${encodeURIComponent(id)}`, { method: 'POST' });
+  } catch(e){}
+}
+
+async function runSchedule(id, btn) {
+  if (btn) { btn.textContent = 'TRIGGERED'; btn.style.background = 'var(--green)'; }
+  addMsg('SCHEDULER', `▶ Manually triggering schedule #${id}...`, 'var(--cyan)');
+  try {
+    await fetch(getApiBase() + `/api/run_schedule?id=${encodeURIComponent(id)}`, { method: 'POST' });
+  } catch(e){}
+  setTimeout(() => { if (btn) { btn.textContent = '▶ RUN'; btn.style.background = ''; } }, 1200);
+}
+
+async function deleteSchedule(id, btn) {
+  if (!confirm(`Delete schedule #${id}?`)) return;
+  // Optimistic 0ms UI deletion:
+  const row = document.getElementById(`sched-row-${id}`) || (btn ? btn.closest('tr') : null);
+  if (row) {
+    row.style.opacity = '0.2';
+    row.style.transition = 'all 0.2s';
+    setTimeout(() => row.remove(), 220);
+  }
+  addMsg('SCHEDULER', `🗑 Schedule #${id} removed.`, 'var(--amber)');
+  try {
+    await fetch(getApiBase() + `/api/delete_schedule?id=${encodeURIComponent(id)}`, { method: 'POST' });
+  } catch(e){}
+}
+
+// ── FAST AUTONOMOUS AGENT LAUNCH & ABORT ──────────────────────────
+async function launchAgentTask() {
+  const input = document.getElementById('agent-inline-input');
+  const goal = input.value.trim();
+  if (!goal) return;
+  input.value = '';
+  document.getElementById('agent-task-status').textContent = 'RUNNING';
+  document.getElementById('agent-task-status').style.color = 'var(--cyan)';
+  document.getElementById('agent-abort-btn').style.display = 'inline-block';
+  document.getElementById('agent-task-progress-box').style.display = 'block';
+  document.getElementById('agent-task-goal').textContent = goal;
+  document.getElementById('agent-task-step').textContent = 'Synthesizing fast DAG plan...';
+  addMsg('AGENT', `🚀 Autonomous Agent launched: "${goal}"`, 'var(--cyan)');
+  try {
+    await fetch(getApiBase() + `/api/agent_task?goal=${encodeURIComponent(goal)}`, { method: 'POST' });
+  } catch(e){}
+}
+
+async function stopAgentTask() {
+  try {
+    await fetch(getApiBase() + '/api/stop_agent', { method: 'POST' });
+    document.getElementById('agent-task-status').textContent = 'STOPPED';
+    document.getElementById('agent-task-status').style.color = 'var(--red)';
+    document.getElementById('agent-abort-btn').style.display = 'none';
+    document.getElementById('agent-task-step').textContent = 'Workflow aborted by user.';
+    addMsg('AGENT', '⏹️ Autonomous agent cancelled.', 'var(--red)');
+  } catch(e){}
+}
+
+</script>
+
+<!-- Baymax Balalala Celebratory Toast Modal -->
+<div id="balalala-toast" style="display: none; position: fixed; top: 40%; left: 50%; transform: translate(-50%, -50%); background: rgba(5, 15, 30, 0.95); border: 2px solid var(--cyan); border-radius: 20px; padding: 28px 50px; text-align: center; z-index: 99999; box-shadow: 0 0 50px rgba(0, 240, 255, 0.7), inset 0 0 20px rgba(0, 240, 255, 0.2); backdrop-filter: blur(25px); animation: popBounce 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+  <div style="font-size: 3.8rem; margin-bottom: 6px; filter: drop-shadow(0 0 15px rgba(0,240,255,0.8));">👊</div>
+  <div style="font-family: 'Orbitron', sans-serif; font-size: 2.2rem; font-weight: 800; color: #ffffff; letter-spacing: 5px; text-shadow: 0 0 20px var(--cyan);">BALALALA!</div>
+  <div style="font-size: 0.85rem; color: var(--ice); letter-spacing: 2px; margin-top: 8px; font-weight: 600;">FIST BUMP ACKNOWLEDGED</div>
+</div>
+
+  <!-- ⚡ MACRO PLAYBOOKS MODAL -->
+  <div class="hud-modal-panel" id="macro-panel">
+    <div class="hud-modal-header">
+      <div class="hud-modal-title">⚡ MACRO PLAYBOOKS & SYNTHESIZER</div>
+      <button class="hud-modal-close" onclick="closeMacroPanel()">✕</button>
+    </div>
+    <div style="display: flex; gap: 8px; align-items: center;">
+      <input type="text" id="new-macro-name" placeholder="Enter macro name (e.g. daily_workflow)..." style="flex:1; background:rgba(0,0,0,0.6); border:1px solid var(--border); border-radius:4px; padding:6px 10px; color:#fff; font-size:0.75rem; outline:none;" />
+      <button class="hud-btn-mini" id="macro-record-toggle-btn" onclick="handleMacroRecordToggle()" style="padding:6px 12px; font-weight:bold; background:rgba(255,0,51,0.2); border-color:var(--red); color:var(--red);">⏺️ RECORD MACRO</button>
+    </div>
+    <div id="macro-record-status" style="display:none; font-size:0.65rem; color:var(--red); font-family:'Orbitron';">🔴 RECORDING IN PROGRESS... PERFORM YOUR ACTIONS, THEN CLICK STOP RECORDING</div>
+    <div style="max-height: 280px; overflow-y: auto;">
+      <table class="hud-table">
+        <thead>
+          <tr>
+            <th>PLAYBOOK NAME</th>
+            <th>UPDATED</th>
+            <th style="text-align:right;">ACTIONS</th>
+          </tr>
+        </thead>
+        <tbody id="macro-list-tbody">
+          <tr><td colspan="3" style="text-align:center; color:#888;">Loading macros...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 📅 AUTOMATION SCHEDULES MODAL -->
+  <div class="hud-modal-panel" id="schedules-panel">
+    <div class="hud-modal-header">
+      <div class="hud-modal-title">📅 AUTOMATION SCHEDULES & DAEMONS</div>
+      <button class="hud-modal-close" onclick="closeSchedulesPanel()">✕</button>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:6px; background:rgba(0,0,0,0.4); border:1px solid var(--border); border-radius:6px; padding:8px;">
+      <div style="display:flex; gap:6px;">
+        <input type="text" id="sched-directive" placeholder="AI Directive (e.g. morning briefing, check emails)..." style="flex:2; background:rgba(0,0,0,0.6); border:1px solid var(--border); border-radius:4px; padding:5px 8px; color:#fff; font-size:0.72rem; outline:none;" />
+        <select id="sched-type" style="flex:1; background:#0a0c14; border:1px solid var(--border); border-radius:4px; padding:5px; color:var(--cyan); font-size:0.7rem; outline:none;">
+          <option value="command">Command (Execute)</option>
+          <option value="reminder">Reminder (Spoken)</option>
+        </select>
+      </div>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <input type="text" id="sched-time" placeholder="Interval (e.g. 30 for 30m) OR Time (e.g. 08:30)..." style="flex:1; background:rgba(0,0,0,0.6); border:1px solid var(--border); border-radius:4px; padding:5px 8px; color:#fff; font-size:0.72rem; outline:none;" />
+        <button class="hud-btn-mini" onclick="submitNewSchedule()" style="padding:6px 14px; font-weight:bold; background:rgba(0,255,170,0.15); border-color:var(--green); color:var(--green);">➕ ADD SCHEDULE</button>
+      </div>
+    </div>
+    <div style="max-height: 280px; overflow-y: auto;">
+      <table class="hud-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>SCHEDULE</th>
+            <th>TYPE</th>
+            <th>DIRECTIVE</th>
+            <th style="text-align:right;">ACTIONS</th>
+          </tr>
+        </thead>
+        <tbody id="schedules-list-tbody">
+          <tr><td colspan="5" style="text-align:center; color:#888;">Loading schedules...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,29 @@
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+build/
+dist/
+*.spec
+
+# Environment & Secret Keys (CRITICAL)
+.env
+*.env.local
+*.env.*.local
+
+# Dynamic User Memory & Session Data
+jarvis_memory.json
+tars_licenses.json
+*.log
+*.tmp
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
