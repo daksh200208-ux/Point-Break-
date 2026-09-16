@@ -9,12 +9,26 @@ import os
 import re
 import time
 import json
-import urllib.parse
-import urllib.request
 import webbrowser
 from datetime import datetime
 
-REPORT_DIR = os.path.join(os.path.expanduser("~"), "Desktop")
+def _resolve_desktop_dir():
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders")
+        desktop, _ = winreg.QueryValueEx(key, "Desktop")
+        winreg.CloseKey(key)
+        desktop = os.path.expandvars(desktop)
+        if os.path.isdir(desktop):
+            return desktop
+    except Exception:
+        pass
+    onedrive_desktop = os.path.join(os.path.expanduser("~"), "OneDrive", "Desktop")
+    if os.path.isdir(onedrive_desktop):
+        return onedrive_desktop
+    return os.path.join(os.path.expanduser("~"), "Desktop")
+
+REPORT_DIR = _resolve_desktop_dir()
 
 class DossierEngine:
     def __init__(self):
@@ -39,7 +53,6 @@ class DossierEngine:
             import google.generativeai as genai
             if api_key:
                 genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-2.5-flash")
             prompt = (
                 f"You are Point Break Intelligence Directorate preparing a Classified Strategic Dossier for {owner_name}.\n"
                 f"Topic: '{topic}'.\n\n"
@@ -51,9 +64,17 @@ class DossierEngine:
                 f"5. RAW INTELLIGENCE DATA POINTS: 4-5 bullet facts with quantitative metrics or verified benchmarks.\n\n"
                 f"Write with authoritative, deep, high-level tactical insight. Be thorough and analytical."
             )
-            resp = model.generate_content(prompt)
-            if resp and resp.text:
-                analysis_text = resp.text.strip()
+            models_to_try = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-2.0-flash"]
+            for m_name in models_to_try:
+                try:
+                    model = genai.GenerativeModel(m_name)
+                    resp = model.generate_content(prompt)
+                    if resp and resp.text:
+                        analysis_text = resp.text.strip()
+                        print(f"[Dossier AI] Successfully synthesized via {m_name}")
+                        break
+                except Exception as m_err:
+                    print(f"[Dossier AI] Model {m_name} failed: {m_err}")
         except Exception as e:
             print(f"[Dossier AI Error]: {e}")
 
@@ -230,10 +251,30 @@ class DossierEngine:
         try:
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(html_content)
-            print(f"[Dossier Engine] Dossier generated successfully at: {file_path}")
+            print(f"[Dossier Engine] HTML dossier rendered at: {file_path}")
+
+            # Attempt PDF compilation via headless Chromium / Edge
+            pdf_filename = f"PointBreak_Dossier_{safe_topic}_{timestamp}.pdf"
+            pdf_path = os.path.join(REPORT_DIR, pdf_filename)
+            edge_paths = [
+                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+            ]
+            browser_bin = next((p for p in edge_paths if os.path.exists(p)), None)
+            if browser_bin:
+                try:
+                    import subprocess
+                    cmd = [browser_bin, "--headless", "--disable-gpu", f"--print-to-pdf={pdf_path}", file_path]
+                    subprocess.run(cmd, capture_output=True, timeout=20, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+                except Exception as pe:
+                    print(f"[Dossier PDF Error]: {pe}")
+
+            final_path = pdf_path if (os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 1000) else file_path
+            print(f"[Dossier Engine] Dossier generated successfully at: {final_path}")
             return {
                 "success": True,
-                "file_path": file_path,
+                "file_path": final_path,
                 "topic": topic
             }
         except Exception as e:

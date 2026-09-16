@@ -1,49 +1,43 @@
 ====================================================================
             POINT BREAK 2.5 — COMMERCIAL PASSKEY EDITION
-                      QUICK-START SETUP GUIDE
+                      OFFICIAL SETUP & ONBOARDING
 ====================================================================
 
-Congratulations on getting Point Break 2.5 (Passkey Edition)! Your personal 
-Tactical AI Assistant is 100% plug-and-play and ready to run.
+Publisher: Point Break Technologies Inc.
+Product:   Point Break T.A.R.S. Commercial Edition (v2.5)
+Support:   support@pointbreak.ai // Stark Systems AI Division
 
 --------------------------------------------------------------------
-⚡ 3-STEP INSTANT SETUP & ONBOARDING:
+⚡ 3-STEP INSTANT SETUP & PUBLISHER AUTHORIZATION:
 --------------------------------------------------------------------
 
-1. UNZIP THIS FOLDER:
-   Make sure you have extracted this ZIP file onto your PC 
-   (e.g., to your Desktop or C:\ drive).
+1. EXTRACT THE DOWNLOADED ZIP FILE:
+   Extract this entire folder to your Desktop or C:\ drive.
 
-2. DOUBLE-CLICK "launch_tars.bat":
-   Double-click the `launch_tars.bat` file to initialize Point Break.
+2. RUN "1-Click_Authorize_PointBreak.bat" (RECOMMENDED FOR FIRST RUN):
+   - Double-click `1-Click_Authorize_PointBreak.bat`.
+   - This automatically removes Windows Mark-of-the-Web restrictions,
+     registers the official Point Break Technologies certificate into
+     your Windows Trusted Publishers store, and launches Point Break.
+   - If Windows SmartScreen prompts "Windows protected your PC":
+     Click "More Info" -> Click "Run Anyway" (Publisher: Point Break Technologies Inc.).
 
-3. FIRST-TIME INTERACTIVE VOICE ONBOARDING (ONCE ONLY):
-   - On first run, Point Break will welcome you out loud:
-     "Welcome to Point Break. First, what is your name?"
-   - Speak your name (e.g. "Rahul" or "Alex").
-   - Point Break will ask:
-     "Hello [Name]. Now, please speak a secret word to set as your Master Passkey."
-   - Speak your secret word (e.g. "Stark" or "Sentinel").
-   - Point Break confirms setup:
-     "Security profile configured. Point Break is now fully operational."
-
-4. EVERY SUBSEQUENT PC BOOT / STARTUP:
-   - When your computer turns on, Point Break runs silently in the background.
-   - It prompts: "Point Break Security Protocol active. State your security passkey."
-   - Speak your secret word -> "Passkey verified. Welcome back!" -> Standing by!
+3. INTERACTIVE VOICE ONBOARDING:
+   - Point Break will welcome you: "Welcome to Point Break. First, what is your name?"
+   - Speak your name (e.g., "Rahul" or "Alex").
+   - Point Break will prompt: "Now, please speak a secret word to set as your Master Passkey."
+   - Speak your passkey word -> Setup complete!
 
 --------------------------------------------------------------------
-🎯 POPULAR VOICE COMMANDS (Wake: "Point Break", "TARS", or "Jarvis"):
+🎯 EVERYDAY VOICE COMMANDS (Wake: "Point Break", "TARS", or "Jarvis"):
 --------------------------------------------------------------------
-- "Point Break, change passkey to [new word]" -> Updates your master security word
-- "Point Break, engage with me" -> Live 30 FPS visual vision mode
-- "Point Break, research SpaceX launch" -> Real-time live web surfer
-- "Point Break, explain my screen" -> Solves homework/code bugs & copies fix
-- "Point Break, organize my downloads" -> Auto-sorts files into clean folders
-- "Point Break, remember that [fact]" -> Saves persistent note in Memory Vault
-- "Point Break, what do you remember about [topic]" -> Recalls saved notes
-- Press [Ctrl] or [Esc] at any second to instantly stop speech!
+- "Point Break, find my electricity bill" -> Natural language file search
+- "Point Break, compare prices of [item]" -> Real-time shopping comparison
+- "Point Break, order food on Zomato / Swiggy" -> Autonomous transaction engine
+- "Point Break, explain my screen" -> Analyzes active window & copies solution
+- "Point Break, organize my downloads" -> Clean folders automatically
+- Press [Ctrl] or [Esc] at any time to instantly stop speech!
 
 ====================================================================
-           Engineered by Stark Systems // Point Break AI Division
+           (C) 2026 Point Break Technologies Inc. All Rights Reserved.
 ====================================================================

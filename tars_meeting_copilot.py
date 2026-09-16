@@ -15,7 +15,10 @@ import threading
 import queue
 import re
 import json
-import sounddevice as sd
+try:
+    import sounddevice as sd
+except Exception:
+    sd = None
 import numpy as np
 import speech_recognition as sr
 import google.generativeai as genai
@@ -48,7 +51,7 @@ class TarsMeetingCopilot:
 
     def _query_ai_model(self, prompt: str, timeout: float = 15.0) -> str:
         """Robust Gemini query with automatic fallback across models."""
-        models = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-flash-latest", "gemini-pro-latest"]
+        models = ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"]
         for model_name in models:
             try:
                 model = genai.GenerativeModel(model_name)

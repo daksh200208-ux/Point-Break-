@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>POINT BREAK ◈ 3D AR Holographic Spatial HUD</title>
+  <style>
+    :root {
+      --cyan: #00f0ff;
+      --cyan-glow: rgba(0, 240, 255, 0.45);
+      --emerald: #00ff88;
+      --emerald-glow: rgba(0, 255, 136, 0.45);
+      --red: #ff3344;
+      --dark-bg: #03070d;
+      --panel-bg: rgba(3, 11, 20, 0.80);
+      --border-cyan: rgba(0, 240, 255, 0.35);
+      --font-tech: 'Courier New', 'Consolas', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: var(--dark-bg);
+      font-family: var(--font-tech);
+      color: var(--cyan);
+    }
+
+    /* Live AR Video Mirror */
+    #video-bg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      transform: scaleX(-1);
+      z-index: 1;
+      opacity: 0.45;
+      filter: contrast(120%) brightness(85%) hue-rotate(170deg);
+      transition: opacity 0.3s ease;
+    }
+
+    /* 3D WebGL Hologram Canvas */
+    #canvas3d {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 2;
+      pointer-events: auto;
+    }
+
+    /* HUD Scanlines & Holographic Depth */
+    .ar-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 3;
+      pointer-events: none;
+      background: radial-gradient(circle at center, transparent 40%, rgba(3, 7, 13, 0.85) 100%),
+                  linear-gradient(rgba(0, 240, 255, 0.03) 50%, rgba(0, 0, 0, 0.25) 50%);
+      background-size: 100% 100%, 100% 4px;
+    }
+
+    /* Top Header Bar */
+    .header-bar {
+      position: absolute;
+      top: 20px;
+      left: 25px;
+      right: 25px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    .brand-box {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      background: var(--panel-bg);
+      padding: 10px 20px;
+      border: 1px solid var(--border-cyan);
+      border-radius: 4px;
+      box-shadow: 0 0 15px var(--cyan-glow);
+      backdrop-filter: blur(8px);
+      pointer-events: auto;
+    }
+
+    .brand-title {
+      font-size: 1.1rem;
+      font-weight: 900;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      text-shadow: 0 0 10px var(--cyan);
+    }
+
+    .badge-live {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      color: var(--emerald);
+      text-shadow: 0 0 8px var(--emerald-glow);
+    }
+
+    .badge-live::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      background: var(--emerald);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--emerald);
+      animation: pulse 1.5s infinite ease-in-out;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.3; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.2); }
+    }
+
+    /* Left Telemetry Panel */
+    .left-telemetry {
+      position: absolute;
+      top: 90px;
+      left: 25px;
+      width: 260px;
+      background: var(--panel-bg);
+      border: 1px solid var(--border-cyan);
+      border-radius: 4px;
+      padding: 15px;
+      z-index: 10;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 0 15px rgba(0, 240, 255, 0.2);
+    }
+
+    .panel-title {
+      font-size: 0.8rem;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--border-cyan);
+      padding-bottom: 5px;
+      margin-bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.8rem;
+      margin: 8px 0;
+    }
+
+    .stat-bar-bg {
+      width: 100%;
+      height: 6px;
+      background: rgba(0, 240, 255, 0.15);
+      border-radius: 3px;
+      margin-top: 3px;
+      overflow: hidden;
+    }
+
+    .stat-bar-fill {
+      height: 100%;
+      background: var(--cyan);
+      box-shadow: 0 0 8px var(--cyan);
+      width: 30%;
+      transition: width 0.4s ease, background-color 0.4s ease;
+    }
+
+    /* Right Gesture Guide */
+    .right-guide {
+      position: absolute;
+      top: 90px;
+      right: 25px;
+      width: 280px;
+      background: var(--panel-bg);
+      border: 1px solid var(--border-cyan);
+      border-radius: 4px;
+      padding: 15px;
+      z-index: 10;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 0 15px rgba(0, 240, 255, 0.2);
+    }
+
+    .gesture-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 10px 0;
+      font-size: 0.75rem;
+    }
+
+    .gesture-key {
+      background: rgba(0, 240, 255, 0.2);
+      border: 1px solid var(--cyan);
+      padding: 3px 7px;
+      border-radius: 3px;
+      font-weight: bold;
+      min-width: 90px;
+      text-align: center;
+      box-shadow: 0 0 5px var(--cyan-glow);
+    }
+
+    /* Bottom Selector Deck */
+    .bottom-deck {
+      position: absolute;
+      bottom: 25px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 15px;
+      z-index: 10;
+      background: var(--panel-bg);
+      padding: 8px 16px;
+      border: 1px solid var(--border-cyan);
+      border-radius: 30px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 0 20px var(--cyan-glow);
+    }
+
+    .mode-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--cyan);
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-family: var(--font-tech);
+      font-size: 0.8rem;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.25s ease;
+    }
+
+    .mode-btn:hover {
+      background: rgba(0, 240, 255, 0.15);
+      border-color: var(--cyan);
+      box-shadow: 0 0 10px var(--cyan-glow);
+    }
+
+    .mode-btn.active {
+      background: var(--cyan);
+      color: var(--dark-bg);
+      font-weight: 900;
+      box-shadow: 0 0 15px var(--cyan);
+    }
+
+    /* Floating Model Label */
+    .model-hud-label {
+      position: absolute;
+      top: 65%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    .model-name {
+      font-size: 1.6rem;
+      font-weight: 900;
+      letter-spacing: 6px;
+      text-transform: uppercase;
+      text-shadow: 0 0 15px var(--cyan);
+      color: #fff;
+    }
+
+    .model-sub {
+      font-size: 0.8rem;
+      letter-spacing: 3px;
+      color: var(--cyan);
+      margin-top: 5px;
+      opacity: 0.85;
+    }
+
+    /* Hand Tracking Crosshair Reticle */
+    #hand-cursor {
+      position: absolute;
+      width: 26px;
+      height: 26px;
+      border: 2px solid var(--cyan);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 100;
+      box-shadow: 0 0 12px var(--cyan);
+      display: none;
+      transition: transform 0.05s ease-out;
+    }
+
+    #hand-cursor::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 6px;
+      height: 6px;
+      background: #fff;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 0 8px #fff;
+    }
+
+    #hand-cursor.pinching {
+      border-color: var(--emerald);
+      transform: translate(-50%, -50%) scale(0.85);
+      box-shadow: 0 0 20px var(--emerald);
+    }
+
+    /* Pepper's Ghost 4-Quadrant Mode */
+    body.peppers-ghost #video-bg {
+      display: none;
+    }
+
+    body.peppers-ghost .ar-overlay,
+    body.peppers-ghost .left-telemetry,
+    body.peppers-ghost .right-guide,
+    body.peppers-ghost .bottom-deck,
+    body.peppers-ghost .header-bar,
+    body.peppers-ghost .model-hud-label {
+      display: none !important;
+    }
+
+    /* Action Notification Toast */
+    #action-toast {
+      position: absolute;
+      top: 30px;
+      left: 50%;
+      transform: translateX(-50%) translateY(-100px);
+      background: var(--panel-bg);
+      border: 1px solid var(--emerald);
+      color: var(--emerald);
+      padding: 10px 25px;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      box-shadow: 0 0 20px var(--emerald-glow);
+      z-index: 1000;
+      transition: transform 0.4s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+      pointer-events: none;
+    }
+
+    #action-toast.show {
+      transform: translateX(-50%) translateY(0);
+    }
+  </style>
+
+  <!-- Three.js CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  
+  <!-- MediaPipe Hands & Camera Utils for 60fps GPU tracking -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+  <video id="video-bg" autoplay playsinline muted></video>
+  <canvas id="canvas3d"></canvas>
+  <div class="ar-overlay"></div>
+  <div id="hand-cursor"></div>
+  <div id="action-toast">TACTICAL COMMAND EXECUTED</div>
+
+  <div class="header-bar">
+    <div class="brand-box">
+      <div class="brand-title">POINT BREAK ◈ AR SPATIAL HUD</div>
+      <div class="badge-live" id="cam-status">CAMERA ACTIVE [60 FPS]</div>
+    </div>
+    <div class="brand-box">
+      <div style="font-size: 0.75rem; letter-spacing: 1px;" id="clock-display">00:00:00</div>
+      <button class="mode-btn" style="padding: 4px 10px; font-size: 0.7rem;" onclick="togglePeppersGhost()">PEPPER'S GHOST [P]</button>
+    </div>
+  </div>
+
+  <div class="left-telemetry">
+    <div class="panel-title">
+      <span>SYSTEM VITALS</span>
+      <span id="uptime-tag">ONLINE</span>
+    </div>
+    <div class="stat-row">
+      <span>CPU LOAD:</span>
+      <span id="cpu-val">0%</span>
+    </div>
+    <div class="stat-bar-bg"><div class="stat-bar-fill" id="cpu-bar"></div></div>
+
+    <div class="stat-row" style="margin-top: 12px;">
+      <span>MEMORY (RAM):</span>
+      <span id="ram-val">0%</span>
+    </div>
+    <div class="stat-bar-bg"><div class="stat-bar-fill" id="ram-bar"></div></div>
+
+    <div class="stat-row" style="margin-top: 12px;">
+      <span>NETWORK I/O:</span>
+      <span id="net-val">0 KB/s</span>
+    </div>
+    <div class="stat-bar-bg"><div class="stat-bar-fill" id="net-bar" style="width: 20%;"></div></div>
+
+    <div class="stat-row" style="margin-top: 12px;">
+      <span>PING LATENCY:</span>
+      <span id="ping-val">12 ms</span>
+    </div>
+  </div>
+
+  <div class="right-guide">
+    <div class="panel-title">
+      <span>SPATIAL GESTURES</span>
+      <span>ACTIVE</span>
+    </div>
+    <div class="gesture-item">
+      <span class="gesture-key">SWIPE L / R</span>
+      <span>Browse 3D Models</span>
+    </div>
+    <div class="gesture-item">
+      <span class="gesture-key">PINCH DRAG</span>
+      <span>360° 3D Rotation</span>
+    </div>
+    <div class="gesture-item">
+      <span class="gesture-key">2-HAND ZOOM</span>
+      <span>Scale Matrix</span>
+    </div>
+    <div class="gesture-item">
+      <span class="gesture-key">PEACE SIGN</span>
+      <span>HUD Status Lock</span>
+    </div>
+  </div>
+
+  <div class="bottom-deck">
+    <button class="mode-btn active" onclick="switchHoloModel(0)">ARC REACTOR</button>
+    <button class="mode-btn" onclick="switchHoloModel(1)">ORBITAL SENTRY</button>
+    <button class="mode-btn" onclick="switchHoloModel(2)">DNA GENOME</button>
+    <button class="mode-btn" onclick="switchHoloModel(3)">CAD HELMET</button>
+  </div>
+
+  <div class="model-hud-label">
+    <div class="model-name" id="label-title">ARC REACTOR CORE</div>
+    <div class="model-sub" id="label-subtitle">TACTICAL HARDWARE & THERMAL TELEMETRY</div>
+  </div>
+
+  <script>
+    let scene, camera, renderer;
+    let holoGroup, pedestalGroup;
+    let currentModelIndex = 0;
+    let modelObjects = [];
+    let arcCoreMesh, arcRings = [], globeMesh, genomeGroup, helmetGroup;
+    let particleSystem;
+
+    let isPinching = false;
+    let prevPinchPos = { x: 0, y: 0 };
+    let lastSwipeTime = 0;
+    let lastPeaceTime = 0;
+
+    let cpuPercent = 15;
+    let ramPercent = 40;
+    let netSpeed = 120;
+
+    function initThreeJS() {
+      const canvas = document.getElementById('canvas3d');
+      scene = new THREE.Scene();
+
+      camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(0, 0, 7);
+
+      renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+      holoGroup = new THREE.Group();
+      scene.add(holoGroup);
+
+      const ambientLight = new THREE.AmbientLight(0x00f0ff, 1.2);
+      scene.add(ambientLight);
+
+      const coreLight = new THREE.PointLight(0x00ff88, 3, 20);
+      coreLight.position.set(0, 0, 2);
+      scene.add(coreLight);
+
+      buildHolographicPedestal();
+      buildHoloParticles();
+      buildArcReactor();
+      buildOrbitalGlobe();
+      buildDnaGenome();
+      buildCadHelmet();
+
+      switchHoloModel(0);
+      animate();
+    }
+
+    function buildHolographicPedestal() {
+      pedestalGroup = new THREE.Group();
+      pedestalGroup.position.set(0, -2.2, 0);
+
+      for (let r = 0.8; r <= 3.2; r += 0.6) {
+        const ringGeo = new THREE.RingGeometry(r, r + 0.04, 64);
+        const ringMat = new THREE.MeshBasicMaterial({
+          color: 0x00f0ff,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.45 - (r * 0.08)
+        });
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+        ring.rotation.x = Math.PI / 2;
+        pedestalGroup.add(ring);
+      }
+
+      const tickGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.15, 8);
+      const tickMat = new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.7 });
+      for (let i = 0; i < 36; i++) {
+        const angle = (i / 36) * Math.PI * 2;
+        const tick = new THREE.Mesh(tickGeo, tickMat);
+        tick.position.set(Math.cos(angle) * 2.0, 0, Math.sin(angle) * 2.0);
+        tick.rotation.y = -angle;
+        pedestalGroup.add(tick);
+      }
+
+      scene.add(pedestalGroup);
+    }
+
+    function buildHoloParticles() {
+      const pCount = 350;
+      const pGeo = new THREE.BufferGeometry();
+      const pPos = new Float32Array(pCount * 3);
+
+      for (let i = 0; i < pCount * 3; i += 3) {
+        pPos[i] = (Math.random() - 0.5) * 10;
+        pPos[i + 1] = (Math.random() - 0.5) * 8;
+        pPos[i + 2] = (Math.random() - 0.5) * 6;
+      }
+
+      pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+      const pMat = new THREE.PointsMaterial({
+        color: 0x00f0ff,
+        size: 0.035,
+        transparent: true,
+        opacity: 0.55,
+        blending: THREE.AdditiveBlending
+      });
+
+      particleSystem = new THREE.Points(pGeo, pMat);
+      scene.add(particleSystem);
+    }
+
+    function buildArcReactor() {
+      const group = new THREE.Group();
+
+      const coreGeo = new THREE.SphereGeometry(0.55, 32, 32);
+      const coreMat = new THREE.MeshBasicMaterial({
+        color: 0x00f0ff,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.85
+      });
+      arcCoreMesh = new THREE.Mesh(coreGeo, coreMat);
+      group.add(arcCoreMesh);
+
+      const innerGeo = new THREE.SphereGeometry(0.35, 16, 16);
+      const innerMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+      const innerCore = new THREE.Mesh(innerGeo, innerMat);
+      group.add(innerCore);
+
+      for (let i = 0; i < 4; i++) {
+        const torusGeo = new THREE.TorusGeometry(1.0 + i * 0.25, 0.03, 16, 64);
+        const torusMat = new THREE.MeshBasicMaterial({
+          color: i % 2 === 0 ? 0x00f0ff : 0x00ff88,
+          wireframe: true,
+          transparent: true,
+          opacity: 0.7
+        });
+        const ring = new THREE.Mesh(torusGeo, torusMat);
+        ring.rotation.x = Math.PI / 2 + (i * 0.3);
+        ring.rotation.y = (i * 0.4);
+        group.add(ring);
+        arcRings.push(ring);
+      }
+
+      for (let i = 0; i < 10; i++) {
+        const angle = (i / 10) * Math.PI * 2;
+        const coilGeo = new THREE.BoxGeometry(0.15, 0.08, 0.35);
+        const coilMat = new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true });
+        const coil = new THREE.Mesh(coilGeo, coilMat);
+        coil.position.set(Math.cos(angle) * 1.5, Math.sin(angle) * 1.5, 0);
+        coil.rotation.z = angle;
+        group.add(coil);
+      }
+
+      modelObjects.push(group);
+      holoGroup.add(group);
+    }
+
+    function buildOrbitalGlobe() {
+      const group = new THREE.Group();
+
+      const globeGeo = new THREE.SphereGeometry(1.5, 32, 32);
+      const globeMat = new THREE.MeshBasicMaterial({
+        color: 0x00f0ff,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.4
+      });
+      globeMesh = new THREE.Mesh(globeGeo, globeMat);
+      group.add(globeMesh);
+
+      const haloGeo = new THREE.SphereGeometry(1.65, 32, 32);
+      const haloMat = new THREE.MeshBasicMaterial({
+        color: 0x00ff88,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.15
+      });
+      const halo = new THREE.Mesh(haloGeo, haloMat);
+      group.add(halo);
+
+      for (let i = 0; i < 3; i++) {
+        const orbitGeo = new THREE.TorusGeometry(2.0 + i * 0.3, 0.015, 16, 100);
+        const orbitMat = new THREE.MeshBasicMaterial({ color: 0x00f0ff, transparent: true, opacity: 0.5 });
+        const orbit = new THREE.Mesh(orbitGeo, orbitMat);
+        orbit.rotation.x = Math.PI / 3 * (i + 1);
+        orbit.rotation.y = Math.PI / 4 * (i + 1);
+        group.add(orbit);
+
+        const satGeo = new THREE.OctahedronGeometry(0.08, 0);
+        const satMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const sat = new THREE.Mesh(satGeo, satMat);
+        sat.position.set(2.0 + i * 0.3, 0, 0);
+        orbit.add(sat);
+      }
+
+      modelObjects.push(group);
+      holoGroup.add(group);
+    }
+
+    function buildDnaGenome() {
+      genomeGroup = new THREE.Group();
+
+      const pairs = 28;
+      const radius = 0.9;
+      const height = 3.5;
+
+      for (let i = 0; i < pairs; i++) {
+        const t = (i / pairs);
+        const angle = t * Math.PI * 4;
+        const y = (t - 0.5) * height;
+
+        const x1 = Math.cos(angle) * radius;
+        const z1 = Math.sin(angle) * radius;
+        const x2 = -x1;
+        const z2 = -z1;
+
+        const nodeGeo = new THREE.SphereGeometry(0.07, 8, 8);
+        const nodeMat1 = new THREE.MeshBasicMaterial({ color: 0x00ff88 });
+        const nodeMat2 = new THREE.MeshBasicMaterial({ color: 0x00f0ff });
+
+        const n1 = new THREE.Mesh(nodeGeo, nodeMat1);
+        n1.position.set(x1, y, z1);
+        genomeGroup.add(n1);
+
+        const n2 = new THREE.Mesh(nodeGeo, nodeMat2);
+        n2.position.set(x2, y, z2);
+        genomeGroup.add(n2);
+
+        const bondGeo = new THREE.CylinderGeometry(0.015, 0.015, radius * 2, 6);
+        const bondMat = new THREE.MeshBasicMaterial({ color: 0x00f0ff, transparent: true, opacity: 0.6 });
+        const bond = new THREE.Mesh(bondGeo, bondMat);
+        bond.position.set(0, y, 0);
+        bond.rotation.z = Math.PI / 2;
+        bond.rotation.y = -angle;
+        genomeGroup.add(bond);
+      }
+
+      modelObjects.push(genomeGroup);
+      holoGroup.add(genomeGroup);
+    }
+
+    function buildCadHelmet() {
+      helmetGroup = new THREE.Group();
+
+      const craniumGeo = new THREE.SphereGeometry(1.2, 24, 18);
+      craniumGeo.scale(0.85, 1.15, 1.0);
+      const wireMat = new THREE.MeshBasicMaterial({ color: 0x00f0ff, wireframe: true, transparent: true, opacity: 0.65 });
+      const cranium = new THREE.Mesh(craniumGeo, wireMat);
+      helmetGroup.add(cranium);
+
+      const faceGeo = new THREE.ConeGeometry(0.9, 1.4, 6);
+      faceGeo.scale(0.9, 1.0, 0.45);
+      const faceMat = new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true, transparent: true, opacity: 0.8 });
+      const faceplate = new THREE.Mesh(faceGeo, faceMat);
+      faceplate.position.set(0, -0.2, 0.6);
+      faceplate.rotation.x = Math.PI;
+      helmetGroup.add(faceplate);
+
+      const eyeGeo = new THREE.BoxGeometry(0.28, 0.06, 0.05);
+      const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+      const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+      leftEye.position.set(-0.35, 0.1, 0.82);
+      leftEye.rotation.z = -0.15;
+      helmetGroup.add(leftEye);
+
+      const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+      rightEye.position.set(0.35, 0.1, 0.82);
+      rightEye.rotation.z = 0.15;
+      helmetGroup.add(rightEye);
+
+      modelObjects.push(helmetGroup);
+      holoGroup.add(helmetGroup);
+    }
+
+    function switchHoloModel(index) {
+      currentModelIndex = (index + modelObjects.length) % modelObjects.length;
+      modelObjects.forEach((obj, idx) => {
+        obj.visible = (idx === currentModelIndex);
+      });
+
+      const buttons = document.querySelectorAll('.mode-btn');
+      buttons.forEach((btn, idx) => {
+        if (idx < 4) btn.classList.toggle('active', idx === currentModelIndex);
+      });
+
+      const labels = [
+        { title: "ARC REACTOR CORE", sub: "TACTICAL HARDWARE & THERMAL TELEMETRY" },
+        { title: "ORBITAL SENTRY GLOBE", sub: "GLOBAL CYBER RECON & NETWORK TOPOLOGY" },
+        { title: "DNA GENOME HELIX", sub: "NEURAL VECTOR MEMORY & AI SYNAPSE NODES" },
+        { title: "CAD MARK HELMET", sub: "SPATIAL HARDWARE & WORKSPACE CONTROLS" }
+      ];
+
+      document.getElementById('label-title').innerText = labels[currentModelIndex].title;
+      document.getElementById('label-subtitle').innerText = labels[currentModelIndex].sub;
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      if (pedestalGroup) pedestalGroup.rotation.y += 0.003;
+      if (particleSystem) particleSystem.rotation.y += 0.001;
+
+      if (currentModelIndex === 0) {
+        const speed = 0.02 + (netSpeed / 1000.0) * 0.05;
+        arcRings.forEach((r, idx) => {
+          r.rotation.z += (idx % 2 === 0 ? speed : -speed);
+        });
+        if (arcCoreMesh) {
+          arcCoreMesh.rotation.y += 0.015;
+          const pulse = 1.0 + Math.sin(Date.now() * 0.006) * 0.08;
+          arcCoreMesh.scale.set(pulse, pulse, pulse);
+
+          if (cpuPercent > 75) {
+            arcCoreMesh.material.color.setHex(0xff3344);
+          } else if (cpuPercent > 40) {
+            arcCoreMesh.material.color.setHex(0x00ff88);
+          } else {
+            arcCoreMesh.material.color.setHex(0x00f0ff);
+          }
+        }
+      }
+
+      if (currentModelIndex === 1 && globeMesh) {
+        globeMesh.rotation.y += 0.006;
+      }
+
+      if (currentModelIndex === 2 && genomeGroup) {
+        genomeGroup.rotation.y += 0.012;
+      }
+
+      if (currentModelIndex === 3 && helmetGroup) {
+        helmetGroup.position.y = Math.sin(Date.now() * 0.002) * 0.12;
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    // ── REDESIGNED CLEAN & NON-DISRUPTIVE GESTURE ENGINE ──
+    function initHandTracking() {
+      const videoElement = document.getElementById('video-bg');
+      const cursor = document.getElementById('hand-cursor');
+
+      const hands = new Hands({
+        locateFile: (file) => 'https://cdn.jsdelivr.net/npm/@mediapipe/hands/' + file
+      });
+
+      hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.55,
+        minTrackingConfidence: 0.5
+      });
+
+      hands.onResults((results) => {
+        if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+          cursor.style.display = 'none';
+          isPinching = false;
+          return;
+        }
+
+        const landmarks = results.multiHandLandmarks[0];
+        cursor.style.display = 'block';
+
+        const indexTip = landmarks[8];
+        const thumbTip = landmarks[4];
+        const middleTip = landmarks[12];
+        const ringTip = landmarks[16];
+        const pinkyTip = landmarks[20];
+        const wrist = landmarks[0];
+
+        // Mirror tracking position
+        const screenX = (1.0 - indexTip.x) * window.innerWidth;
+        const screenY = indexTip.y * window.innerHeight;
+        cursor.style.left = screenX + 'px';
+        cursor.style.top = screenY + 'px';
+
+        // 1. PINCH & DRAG (360 3D Spatial Rotation ONLY)
+        const pinchDist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
+        const currentlyPinching = (pinchDist < 0.065);
+
+        if (currentlyPinching) {
+          cursor.classList.add('pinching');
+          if (isPinching) {
+            const dx = (screenX - prevPinchPos.x) * 0.012;
+            const dy = (screenY - prevPinchPos.y) * 0.012;
+            holoGroup.rotation.y += dx;
+            holoGroup.rotation.x += dy;
+          }
+          prevPinchPos = { x: screenX, y: screenY };
+          isPinching = true;
+        } else {
+          cursor.classList.remove('pinching');
+          isPinching = false;
+        }
+
+        // 2. HORIZONTAL SWIPE (Browse Models)
+        const now = Date.now();
+        if (now - lastSwipeTime > 900 && !isPinching) {
+          if (wrist.x < 0.22) {
+            switchHoloModel(currentModelIndex + 1);
+            showToast('SPATIAL SWIPE: NEXT CAD MATRIX');
+            lastSwipeTime = now;
+          } else if (wrist.x > 0.78) {
+            switchHoloModel(currentModelIndex - 1);
+            showToast('SPATIAL SWIPE: PREV CAD MATRIX');
+            lastSwipeTime = now;
+          }
+        }
+
+        // 3. PEACE SIGN (Index & Middle Up, Ring & Pinky Down)
+        const indexExtended = (indexTip.y < landmarks[6].y);
+        const middleExtended = (middleTip.y < landmarks[10].y);
+        const ringCurled = (ringTip.y > landmarks[14].y);
+        const pinkyCurled = (pinkyTip.y > landmarks[18].y);
+
+        if (indexExtended && middleExtended && ringCurled && pinkyCurled && now - lastPeaceTime > 3000) {
+          lastPeaceTime = now;
+          showToast('VICTORY MATRIX: ALL SYSTEMS OPTIMAL');
+        }
+
+        // 4. TWO-HAND SPREAD (Zoom Matrix)
+        if (results.multiHandLandmarks.length === 2) {
+          const hand1 = results.multiHandLandmarks[0][8];
+          const hand2 = results.multiHandLandmarks[1][8];
+          const distBetweenHands = Math.hypot(hand1.x - hand2.x, hand1.y - hand2.y);
+          const targetScale = Math.max(0.6, Math.min(2.2, distBetweenHands * 3.0));
+          holoGroup.scale.set(targetScale, targetScale, targetScale);
+        }
+      });
+
+      const cameraFeed = new Camera(videoElement, {
+        onFrame: async () => {
+          await hands.send({ image: videoElement });
+        },
+        width: 1280,
+        height: 720
+      });
+
+      cameraFeed.start().catch((err) => {
+        console.warn('Camera start fallback:', err);
+        document.getElementById('cam-status').innerText = 'CAMERA OFFLINE [SIM MODE]';
+      });
+    }
+
+    function startTelemetryPoller() {
+      setInterval(async () => {
+        try {
+          const res = await fetch('/jarvis_status.json');
+          if (!res.ok) return;
+          const data = await res.json();
+
+          cpuPercent = parseInt(data.cpu || 15);
+          ramPercent = parseInt(data.ram || data.mem || 40);
+          netSpeed = parseInt(data.net_down_kbps || 120);
+
+          document.getElementById('cpu-val').innerText = cpuPercent + '%';
+          document.getElementById('cpu-bar').style.width = cpuPercent + '%';
+
+          document.getElementById('ram-val').innerText = ramPercent + '%';
+          document.getElementById('ram-bar').style.width = ramPercent + '%';
+
+          document.getElementById('net-val').innerText = netSpeed + ' KB/s';
+          document.getElementById('ping-val').innerText = (data.ping || 12) + ' ms';
+          document.getElementById('uptime-tag').innerText = data.uptime || 'ONLINE';
+        } catch (e) {}
+      }, 1000);
+
+      setInterval(() => {
+        const d = new Date();
+        document.getElementById('clock-display').innerText = d.toTimeString().split(' ')[0];
+      }, 1000);
+    }
+
+    function togglePeppersGhost() {
+      document.body.classList.toggle('peppers-ghost');
+      showToast(document.body.classList.contains('peppers-ghost') ? "PEPPER'S GHOST ACTIVE (GLASS PYRAMID MODE)" : "NORMAL AR MODE RESTORED");
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('action-toast');
+      toast.innerText = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2200);
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'p' || e.key === 'P') togglePeppersGhost();
+      if (e.key === 'ArrowRight') switchHoloModel(currentModelIndex + 1);
+      if (e.key === 'ArrowLeft') switchHoloModel(currentModelIndex - 1);
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    window.addEventListener('DOMContentLoaded', () => {
+      initThreeJS();
+      initHandTracking();
+      startTelemetryPoller();
+    });
+  </script>
+</body>
+</html>

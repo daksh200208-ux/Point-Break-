@@ -1,3 +1,78 @@
+POINT_BREAK_FAVORITE_PLAYLIST = [
+    ("AC/DC Back In Black", "Back in Black by AC/DC"),
+    ("Hans Zimmer Interstellar No Time For Caution", "the Interstellar theme by Hans Zimmer"),
+    ("Daft Punk Tron Legacy The Son of Flynn", "The Son of Flynn by Daft Punk"),
+    ("The Rolling Stones Paint It Black", "Paint It Black by The Rolling Stones"),
+    ("Eminem Lose Yourself", "Lose Yourself by Eminem"),
+    ("Linkin Park In The End", "In The End by Linkin Park")
+]
+
+GENRE_MOOD_MAP = [
+    (r'\b(hindi\s+songs?|hindi\s+music|a\s+hindi\s+song|bollywood\s+songs?|bollywood\s+music)\b', "trending hindi songs playlist", "trending Hindi hits"),
+    (r'\b(punjabi\s+songs?|punjabi\s+music|a\s+punjabi\s+song)\b', "latest punjabi hits playlist", "latest Punjabi tracks"),
+    (r'\b(romantic\s+songs?|love\s+songs?|romantic\s+music)\b', "best romantic love songs playlist", "romantic melodies"),
+    (r'\b(sad\s+songs?|emotional\s+songs?|heartbreak\s+songs?)\b', "heart touching sad songs playlist", "soulful melancholic tracks"),
+    (r'\b(party\s+songs?|dance\s+songs?|club\s+music|club\s+songs?)\b', "top party dance songs playlist", "high energy party anthems"),
+    (r'\b(lofi|lo-fi|lofi\s+beats?|chill\s+beats?|study\s+beats?)\b', "lofi hip hop chill study beats", "lofi chill beats"),
+    (r'\b(rock\s+songs?|rock\s+music|classic\s+rock)\b', "best classic rock hits playlist", "legendary rock hits"),
+    (r'\b(english\s+songs?|pop\s+songs?|pop\s+music|top\s+hits)\b', "top billboard pop hits playlist", "global pop chart-toppers"),
+    (r'\b(bhojpuri\s+songs?|bhojpuri\s+music)\b', "top bhojpuri hits", "top Bhojpuri hits"),
+    (r'\b(tamil\s+songs?|telugu\s+songs?|south\s+songs?)\b', "top south indian hits playlist", "top South Indian hits")
+]
+
+def resolve_intelligent_media_selection(raw_query: str, owner_name: str = "sir"):
+    """
+    Resolves human-nuanced music requests:
+    Strips emotional fluff ('cause i am bored', 'because i am tired', 'to relax', 'for me'),
+    maps genre/mood intents ('a hindi song' -> 'trending hindi songs playlist'),
+    and handles AI favorite playlist choices with high-fidelity streaming.
+    """
+    import random, re
+    low = raw_query.lower().strip()
+    
+    # 1. AI Autonomous Choice / Personality Playlist Check
+    ai_choice_patterns = [
+        r'\b(song\s+you\s+wanna\s+play|song\s+you\s+want\s+to\s+play|song\s+you\s+want\s+to|any\s*song\s+you\s+wanna\s+play|any\s*song\s+you\s+like|song\s+you\s+like|your\s+favorite\s+song|your\s+choice|whatever\s+you\s+want|whatever\s+you\s+like|something\s+good|something\s+nice|some\s+music|any\s*song|random\s+song|surprise\s+me|pick\s+a\s+song|pick\s+something|play\s+something)\b',
+        r'^(?:play|stream|listen\s+to|put\s+on)\s+(?:a\s+)?(?:song|music|track|tracks|something)?$'
+    ]
+    if any(re.search(p, low) for p in ai_choice_patterns):
+        track, display = random.choice(POINT_BREAK_FAVORITE_PLAYLIST)
+        spoken = f"Excellent choice, {owner_name}. Pulling from my personal playlist: streaming {display}."
+        return track, spoken
+
+    # 2. Strip assistant prefixes & politeness
+    clean = re.sub(r'^(?:hey\s+|ok\s+|yo\s+|bro\s+)?(?:point\s*break|pointbreak|tars|jarvis)?[\s,\-:]*', '', raw_query, flags=re.I).strip()
+    clean = re.sub(r'^(?:please\s+|can\s+you\s+|could\s+you\s+|just\s+|play\s+on\s+youtube\s+|play\s+me\s+|play\s+song\s+|play\s+track\s+|play\s+music\s+|play\s+|stream\s+|listen\s+to\s+|watch\s+on\s+youtube\s+|watch\s+)', '', clean, flags=re.I).strip()
+
+    # 3. Strip conversational fluff / emotions / sentiment reasons
+    fluff_patterns = [
+        r'\b(?:cause|because|coz|as|since)\s+(?:i\s+am|i\'m|im)\s+(?:bored|tired|sad|happy|stressed|exhausted|depressed|excited|alone|working|studying|coding|chilling|relaxing)\b',
+        r'\b(?:to\s+make\s+me\s+feel\s+good|to\s+relax|to\s+chill|to\s+sleep|to\s+focus|to\s+dance|to\s+workout|to\s+study)\b',
+        r'\b(?:for\s+me|right\s+now|pls|please|bro|sir)\b'
+    ]
+    for fp in fluff_patterns:
+        clean = re.sub(fp, ' ', clean, flags=re.I).strip()
+
+    # 4. Strip trailing platform indicators
+    clean = re.sub(r'[\s,\-:]+(?:on\s+youtube|in\s+youtube|from\s+youtube|on\s+yt|on\s+spotify)$', '', clean, flags=re.I).strip()
+    clean = clean.strip(" ,.:;!?\"'\`-_")
+    clean = re.sub(r'\s+', ' ', clean).strip()
+
+    # 5. Check if query matches a curated Genre / Mood / Language
+    for pat, yt_search, spoken_genre in GENRE_MOOD_MAP:
+        if re.search(pat, clean, flags=re.I):
+            spoken = f"Streaming {spoken_genre} for you on YouTube, {owner_name}."
+            return yt_search, spoken
+
+    # 6. Fallback if clean query is empty or too short
+    if not clean or len(clean) < 2:
+        track, display = random.choice(POINT_BREAK_FAVORITE_PLAYLIST)
+        spoken = f"Playing {display} for you, {owner_name}."
+        return track, spoken
+
+    spoken = f"Streaming {clean.title()} on YouTube."
+    return clean, spoken
+
 """
 Point Break 3.0 — Master Brain & Tri-Core Sub-Agent Swarm Engine (Default Edition)
 ===================================================================================
@@ -139,6 +214,8 @@ class SubAgentAlpha:
             try:
                 if t_type == "triage_email":
                     self.triage_gmail_and_autodraft(q)
+                elif t_type == "draft_email":
+                    self.draft_and_stage_email(q)
                 elif t_type == "hunt_jobs":
                     self.hunt_jobs_and_internships(q)
                 elif t_type == "ghostwriter":
@@ -152,6 +229,19 @@ class SubAgentAlpha:
             finally:
                 blackboard.update_agent("ALPHA", "IDLE")
                 self.task_queue.task_done()
+
+    def draft_and_stage_email(self, query: str):
+        speech_arbiter.speak("Drafting and polishing your email with formal grievance formatting, sir...", priority=2)
+        try:
+            from tars_email_copilot import email_copilot
+            email_copilot.generate_and_stage_email(
+                user_prompt=query,
+                speak_fn=lambda msg: speech_arbiter.speak(msg, priority=2),
+                update_status_fn=None
+            )
+        except Exception as e:
+            print("[ALPHA Email Draft Error]:", e)
+            speech_arbiter.speak("Encountered an issue staging email draft, sir.", priority=2)
 
     def triage_gmail_and_autodraft(self, query: str):
         speech_arbiter.speak("Scanning inbox via direct IMAP protocol...", priority=2)
@@ -175,23 +265,31 @@ class SubAgentAlpha:
         speech_arbiter.speak(f"Surfacing verified openings for {clean} on LinkedIn.", priority=2)
 
     def notepad_gpt_ghostwriter(self, query: str):
-        speech_arbiter.speak("Ghostwriting text directly to active editor...", priority=2)
-        topic = re.sub(r'(?i)\b(write|draft|compose|ghostwrite|an\s+essay\s+on|an\s+article\s+on|a\s+letter\s+to|about|for)\b', ' ', query)
+        speech_arbiter.speak("Synthesizing draft, sir...", priority=2)
+        topic = re.sub(r'(?i)\b(write|draft|compose|ghostwrite|an\s+essay\s+on|an\s+article\s+on|a\s+letter\s+to|a\s+formal\s+mail\s+to|a\s+mail\s+to|about|for)\b', ' ', query)
         topic = re.sub(r'\s+', ' ', topic).strip()
         try:
             import google.generativeai as genai
-            model = genai.GenerativeModel("gemini-2.5-flash")
-            res = model.generate_content(f"Write a crisp, professional, ready-to-use piece for: {topic}")
+            model = genai.GenerativeModel("gemini-3.5-flash-lite")
+            res = model.generate_content(f"Write a crisp, highly articulate, professional, ready-to-use piece for: {topic}\nInclude proper greeting, body, formatting, and sign-off.")
             text = res.text.strip()
-            subprocess.Popen(["notepad.exe"], creationflags=subprocess.CREATE_NO_WINDOW if os.name=="nt" else 0)
-            time.sleep(0.6)
+            
+            # 1. Push to Response Monolith on HUD
+            if blackboard.update_status_fn:
+                try:
+                    blackboard.update_status_fn({"last_monolith_response": text})
+                except Exception:
+                    pass
+            
+            # 2. Copy to clipboard
             import pyperclip
             pyperclip.copy(text)
-            pyautogui.hotkey('ctrl', 'v')
-            speech_arbiter.speak("Draft completed in Notepad, Daksh.", priority=2)
+            
+            # 3. If Notepad or editor is in foreground, paste it
+            speech_arbiter.speak("Sir, I have compiled your draft and rendered it directly in the Response Monolith.", priority=2)
         except Exception as e:
             print("[ALPHA Ghostwriter] Error:", e)
-            speech_arbiter.speak("Draft generation error.", priority=2)
+            speech_arbiter.speak("Encountered an error compiling your draft, sir.", priority=2)
 
     def generate_research_dossier(self, query: str):
         speech_arbiter.speak("Synthesizing comprehensive intelligence dossier on target topic...", priority=2)
@@ -209,7 +307,10 @@ class SubAgentAlpha:
                     except Exception:
                         os.startfile(fp)
                 else:
-                    speech_arbiter.speak("Encountered an issue compiling the dossier report.", priority=2)
+                    err = res.get("error", "processing failed")
+                    speech_arbiter.speak(f"Encountered an issue compiling the dossier report: {err}", priority=2)
+            else:
+                speech_arbiter.speak("Dossier engine module is offline. Unable to compile the report, sir.", priority=2)
         except Exception as e:
             print("[ALPHA Dossier] Error:", e)
             speech_arbiter.speak("Intelligence dossier generation encountered an error.", priority=2)
@@ -252,7 +353,9 @@ class SubAgentBeta:
                 elif t_type == "news_briefing":
                     self.read_world_news_protocol(q)
                 elif t_type == "order_food":
-                    self.order_coffee_cmd(q)
+                    self.order_food_cmd(q)
+                elif t_type == "booking_transaction":
+                    self.booking_transaction_cmd(q)
             except Exception as e:
                 print(f"[BETA Error] {t_type}: {e}")
             finally:
@@ -285,18 +388,47 @@ class SubAgentBeta:
         webbrowser.open(url)
 
     def play_media_or_youtube(self, query: str):
+        owner_name = "Operator" if getattr(self, 'is_commercial', False) else "Daksh"
+        if "spotify" in query.lower():
+            from pointbreak_spotify import spotify_engine
+            spotify_engine.play_track(query, speak_fn=lambda m: speech_arbiter.speak(m, priority=2), owner_name=owner_name)
+            return
+        clean_song, spoken_msg = resolve_intelligent_media_selection(query, owner_name=owner_name)
+        speech_arbiter.speak(spoken_msg, priority=2)
+        url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(clean_song)}"
+        try:
+            import pywhatkit
+            pywhatkit.playonyt(clean_song)
+        except Exception as e:
+            webbrowser.open(url)
+            return
+
         q_clean = re.sub(r'(?i)\b(play|stream|listen\s+to|watch|on\s+youtube|youtube)\b', ' ', query)
         q_clean = re.sub(r'\s+', ' ', q_clean).strip()
-        if not q_clean: q_clean = "AC/DC Back in Black"
         speech_arbiter.speak(f"Streaming {q_clean} on YouTube.", priority=2)
         url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(q_clean)}"
         webbrowser.open(url)
 
     def send_whatsapp(self, query: str):
-        speech_arbiter.speak("Opening WhatsApp portal...", priority=2)
-        webbrowser.open("https://web.whatsapp.com")
+        low = query.lower().strip()
+        voice_triggers = [
+            "voice message", "voice note", "voicemail", "voice mail", "audio message",
+            "audio note", "send a voice", "voice msg", "send voice"
+        ]
+        is_voice = any(k in low for k in voice_triggers)
+        if low in ["open whatsapp", "launch whatsapp", "start whatsapp", "whatsapp web", "open wa"]:
+            speech_arbiter.speak("Opening WhatsApp portal on web...", priority=2)
+            webbrowser.open("https://web.whatsapp.com")
+            return
+
+        import jarvis
+        if is_voice:
+            jarvis.send_whatsapp_voice_note_cmd(query)
+        else:
+            jarvis.send_whatsapp_message_cmd(query)
 
     def read_world_news_protocol(self, query: str):
+        import urllib.request, urllib.parse
         # Check if user specified a keyword/topic
         clean_topic = re.sub(r'(?i)\b(read\s+me\s+the\s+news|read\s+the\s+news|world\s+news|global\s+news|news\s+briefing|daily\s+news|give\s+me\s+the\s+news|show\s+me\s+the\s+news|tell\s+me\s+the\s+news|news\s+about|news\s+on|news\s+for|latest\s+news\s+on|latest\s+news\s+about|headlines\s+about|headlines\s+on|news|headlines|today|latest)\b', ' ', query)
         clean_topic = re.sub(r'\s+', ' ', clean_topic).strip()
@@ -332,12 +464,31 @@ class SubAgentBeta:
             webbrowser.open(web_url)
             speech_arbiter.speak(fallback_speech, priority=2)
 
-    def order_coffee_cmd(self, query: str):
-        speech_arbiter.speak("Opening ordering portal for you, Daksh.", priority=2)
-        if "zomato" in query.lower():
-            webbrowser.open("https://www.zomato.com")
-        else:
-            webbrowser.open("https://www.swiggy.com")
+    def order_food_cmd(self, query: str):
+        try:
+            from pointbreak_transactions import transaction_engine
+            transaction_engine.dispatch_transaction(
+                command=query,
+                speak_fn=lambda txt: speech_arbiter.speak(txt, priority=2)
+            )
+        except Exception as e:
+            print(f"[BETA Food Order Error]: {e}")
+            speech_arbiter.speak("Opening ordering portal for you.", priority=2)
+            if "zomato" in query.lower():
+                webbrowser.open("https://www.zomato.com")
+            else:
+                webbrowser.open("https://www.swiggy.com")
+
+    def booking_transaction_cmd(self, query: str):
+        try:
+            from pointbreak_transactions import transaction_engine
+            transaction_engine.dispatch_transaction(
+                command=query,
+                speak_fn=lambda txt: speech_arbiter.speak(txt, priority=2)
+            )
+        except Exception as e:
+            print(f"[BETA Booking Transaction Error]: {e}")
+            speech_arbiter.speak("Transaction booking engine encountered an issue.", priority=2)
 
 
 # ── 5. SUB-AGENT GAMMA: TACTICAL OS, HARDWARE & SENTRY ──────────────
@@ -371,16 +522,29 @@ class SubAgentGamma:
                     self.launch_companion_display()
                 elif t_type == "gods_eye":
                     self.launch_gods_eye(q)
+                elif t_type == "cctv_matrix":
+                    self.show_cctv_matrix(q)
             except Exception as e:
                 print(f"[GAMMA Error] {t_type}: {e}")
             finally:
                 blackboard.update_agent("GAMMA", "IDLE")
                 self.task_queue.task_done()
+
     def launch_gods_eye(self, query: str):
-        speech_arbiter.speak("God's Eye satellite and tactical recon features are restricted for Sir only.", priority=2)
+        try:
+            from pointbreak_godseye import gods_eye_bridge
+            gods_eye_bridge.launch(query, speak_fn=lambda txt: speech_arbiter.speak(txt, priority=2))
+        except Exception as e:
+            print("[GAMMA God's Eye Error]:", e)
+            speech_arbiter.speak("Unable to launch God's Eye View satellite matrix.", priority=2)
 
     def show_cctv_matrix(self, query: str):
-        speech_arbiter.speak("Optical CCTV surveillance feeds are restricted for Sir only.", priority=2)
+        try:
+            import pointbreak_cctv
+            pointbreak_cctv.cctv_engine.launch_cctv_recon(query, speak_fn=lambda txt: speech_arbiter.speak(txt, priority=2))
+        except Exception as e:
+            print("[GAMMA CCTV Error]:", e)
+            speech_arbiter.speak("Unable to access optical CCTV surveillance feeds.", priority=2)
 
     def precision_file_hunter(self, query: str):
         speech_arbiter.speak("Scanning local volumes for target file...", priority=2)
@@ -493,8 +657,118 @@ def point_break_master_brain(query: str, speak_fn=None, update_status_fn=None, i
 
     low = query.lower().strip()
 
-    # ── ALPHA DOMAIN (Career, Writing, Email Triage, Dossiers, Vision) ──
-    if re.search(r'\b(triage|unread|check|scan|read|show|get|open|draft|reply|respond)\b.*\b(emails?|mails?|inbox|draft)\b', low) or 'triage' in low or 'unread email' in low or 'check my mail' in low or 'check my email' in low or 'check mail' in low or 'read my email' in low or 'scan my inbox' in low or 'scan inbox' in low:
+    # ── GMAIL VISION & IN-THREAD TAKEOVER ───────────────────────────
+    if any(k in low for k in ["open that mail", "open it up", "open this mail", "open the mail", "open unread mail", "open the email"]):
+        try:
+            from pointbreak_takeover import takeover_engine
+            import jarvis
+            takeover_engine.open_and_focus_email(speak_fn=lambda txt: speech_arbiter.speak(txt, priority=2), listen_fn=getattr(jarvis, "take_command", None))
+            return True
+        except Exception as e:
+            print(f"[Swarm Email Open Error]: {e}")
+
+    if any(k in low for k in ["read it out", "read the mail", "read this mail", "read the email", "what does the mail say", "what is the mail about", "read mail"]) and "news" not in low:
+        try:
+            from pointbreak_takeover import takeover_engine
+            import jarvis
+            takeover_engine.read_and_summarize_open_email(speak_fn=lambda txt: speech_arbiter.speak(txt, priority=2), listen_fn=getattr(jarvis, "take_command", None))
+            return True
+        except Exception as e:
+            print(f"[Swarm Email Read Error]: {e}")
+
+    if any(k in low for k in ["respond to the mail", "reply to the mail", "reply to email", "draft a reply", "respond to email", "answer the mail"]):
+        try:
+            from pointbreak_takeover import takeover_engine
+            import jarvis
+            takeover_engine.respond_to_open_email(user_intent=query, speak_fn=lambda txt: speech_arbiter.speak(txt, priority=2), listen_fn=getattr(jarvis, "take_command", None))
+            return True
+        except Exception as e:
+            print(f"[Swarm Email Reply Error]: {e}")
+
+    # ── GMAIL WEB INBOX OPEN (DIRECT WEB NAVIGATION) ──
+    if low in [
+        "open mails", "open mail", "open gmail", "open my mail", "open my mails",
+        "open my emails", "open my email", "open inbox", "open my inbox",
+        "check mails", "check mail", "check gmail", "check email", "check emails",
+        "check my mail", "check my mails", "check my email", "check my emails",
+        "check inbox", "check my inbox", "mails", "mail", "gmail", "inbox"
+    ] or re.search(r'^(?:open|launch|show|go\s+to)\s+(?:my\s+)?(?:gmail|mails?|emails?|inbox)$', low):
+        import webbrowser
+        webbrowser.open("https://mail.google.com/mail/u/0/#inbox")
+        speech_arbiter.speak("Opening your Gmail inbox on web, sir.", priority=2)
+        return True
+
+    # ── TIER 2: SUPERPOWERS SOFTWARE FACTORY ──────────────────────────
+    # Voice-commanded autonomous software engineering factory engine
+    _swe_build_match = any(k in low for k in [
+        "build app", "build an app", "build a app", "create app", "create an app",
+        "code project", "code a project", "engineer a", "develop tool", "develop a tool",
+        "build software", "build a software", "superpowers build", "build me",
+        "build a script", "build script", "create a script", "code a script",
+        "build a program", "build program", "create a program", "make an app",
+        "make a tool", "make a script", "build a website", "build website",
+        "create a website", "build a bot", "create a bot", "build bot",
+        "build a cli", "build cli", "build a server", "build server",
+        "build a game", "code a game", "build a library", "build library",
+        "build a package", "build package", "build an api", "build api",
+    ]) or re.search(r'\b(?:build|create|develop|code|engineer|make)\b.*\b(?:app|tool|script|program|website|bot|server|api|library|package|project|software)\b', low)
+
+    _swe_status_match = any(k in low for k in [
+        "project status", "status of app", "status of project", "how is the app",
+        "how is the project", "how is the build", "engineering status",
+        "check on the project", "check on the app", "app status",
+        "how is the app going", "how is my project", "is the app done",
+        "is the project done", "is the build done", "cancel project",
+        "cancel the project", "cancel engineering", "stop the build",
+        "cancel build", "cancel the build"
+    ])
+
+    if _swe_build_match or _swe_status_match:
+        try:
+            from pointbreak_superpowers_bridge import superpowers_factory
+
+            if _swe_status_match:
+                # Status query or cancel
+                if any(k in low for k in ["cancel project", "cancel the project", "cancel engineering", "stop the build", "cancel build", "cancel the build"]):
+                    superpowers_factory.cancel_project(speak_fn=speak_fn)
+                else:
+                    status = superpowers_factory.get_project_status()
+                    msg = status.get('message', 'No project status available.')
+                    speech_arbiter.speak(msg, priority=2)
+            else:
+                # Extract goal from command
+                goal = re.sub(
+                    r'^(?:point\s*break|tars|jarvis)?[\s,\-:]*(?:can\s+you\s+|please\s+)?',
+                    '', query, flags=re.I
+                ).strip()
+                superpowers_factory.dispatch_engineering_task(
+                    goal=goal,
+                    speak_fn=speak_fn,
+                    update_status_fn=update_status_fn
+                )
+            return True
+        except Exception as e:
+            print(f"[Superpowers Bridge Error]: {e}")
+            speech_arbiter.speak(f"Software engineering dispatch error: {e}", priority=2)
+            return True
+
+    # ── ALPHA DOMAIN (Career, Writing, Email Drafting & Triage, Dossiers, Vision) ──
+    if (
+        any(k in low for k in [
+            "draft email", "draft an email", "write an email", "write email",
+            "compose email", "compose an email", "polish email", "polish draft",
+            "polish this draft", "polish policybazaar", "policybazaar.com", "policybazaar",
+            "draft a mail", "write a mail", "compose a mail", "grievance email",
+            "health insurance email", "health insurance grievance", "email to",
+            "send email to", "draft to"
+        ]) or
+        re.search(r'\bmail\s+to\b', low) or
+        re.search(r'\b(draft|write|compose|polish)\b.*\b(emails?|mails?|grievance|draft)\b', low)
+    ) and not any(v in low for v in ["voice", "voicemail", "voice mail", "voice note", "voice message", "audio", "whatsapp"]):
+        agent_alpha.dispatch("draft_email", query)
+        return True
+
+    if re.search(r'\b(triage|unread|check|scan|read\s+my|show\s+my|open\s+my)\b.*\b(emails?|mails?|inbox)\b', low) or 'triage' in low or 'unread email' in low or 'scan inbox' in low:
         agent_alpha.dispatch("triage_email", query)
         return True
 
@@ -506,7 +780,11 @@ def point_break_master_brain(query: str, speak_fn=None, update_status_fn=None, i
         agent_alpha.dispatch("ghostwriter", query)
         return True
 
-    if any(k in low for k in ["research dossier", "generate dossier", "pdf report on", "compile research on"]):
+    if any(k in low for k in [
+        "research dossier", "generate dossier", "pdf report on", "compile research on",
+        "dossier on", "dossier about", "dossier for", "make a dossier", "create a dossier",
+        "intel report on", "intelligence report", "compile dossier"
+    ]) or re.search(r'\b(dossier|intel\s+report)\b', low):
         agent_alpha.dispatch("dossier", query)
         return True
 
@@ -515,7 +793,7 @@ def point_break_master_brain(query: str, speak_fn=None, update_status_fn=None, i
         return True
 
     # ── BETA MEDIA: Play music/video ──────────────────────────────
-    if re.search(r'\b(play|stream|listen\s+to|watch|put\s+on)\b', low) and not any(k in low for k in ['amazon', 'flipkart', 'myntra', 'email', 'mail', 'file', 'todo', 'job', 'intern']):
+    if re.search(r'\b(play|stream|listen\s+to|watch|put\s+on)\b', low) and not any(k in low for k in ['amazon', 'flipkart', 'myntra', 'email', 'mail', 'file', 'todo', 'job', 'intern', 'chess', 'game', 'take over', 'takeover', 'next move', 'best move']):
         agent_beta.dispatch("media_playback", query)
         return True
 
@@ -528,11 +806,40 @@ def point_break_master_brain(query: str, speak_fn=None, update_status_fn=None, i
         agent_beta.dispatch("news_briefing", query)
         return True
 
-    if any(k in low for k in ["order coffee", "order food", "zomato", "swiggy", "open swiggy", "open zomato"]):
+    # ── BETA FOOD TRANSACTIONS & CROSS-PLATFORM SNIPER ───────────
+    if (
+        any(k in low for k in [
+            "order food", "compare food", "zomato", "swiggy", "zinger burger", "zinger", "order pizza",
+            "order coffee", "order biryani", "order burger", "which is cheaper", "whichever is cheaper",
+            "compare on zomato and swiggy", "compare zomato and swiggy", "compare swiggy and zomato"
+        ])
+        or (("order" in low or "buy" in low or "get" in low or "compare" in low) and any(f in low for f in ["food", "burger", "pizza", "biryani", "zomato", "swiggy", "zinger", "kfc", "mcdonalds", "dominos", "meal", "coffee"]))
+        or (any(low.startswith(f) for f in ["order ", "buy "]) and any(f in low for f in ["burger", "pizza", "biryani", "roll", "sandwich", "noodles", "cake", "ice cream"]))
+    ):
         agent_beta.dispatch("order_food", query)
         return True
 
-    if any(k in low for k in ["open whatsapp", "send whatsapp", "whatsapp web"]):
+    # ── BETA TRAVEL & BOOKING TRANSACTIONS (IRCTC, Google Flights, MakeMyTrip) ──
+    _is_train_booking = any(k in low for k in [
+        "book train", "train ticket", "train to", "train from", "book irctc", "irctc ticket", "check train", "find train", "train tickets"
+    ]) or re.search(r'\b(book|reserve|find)\b.*\b(train|railway|irctc)\b', low)
+
+    _is_flight_booking = (any(k in low for k in [
+        "book flight", "flight ticket", "flights to", "fly to", "air ticket", "airline ticket", "cheapest flight", "flight tickets"
+    ]) or re.search(r'\b(book|reserve|find|cheapest)\b.*\b(flight|flights|airline|plane\s+ticket)\b', low)) and not any(k in low for k in ["game", "sim", "simulator"])
+
+    if _is_train_booking or _is_flight_booking:
+        agent_beta.dispatch("booking_transaction", query)
+        return True
+
+    if (
+        any(k in low for k in [
+            "open whatsapp", "whatsapp", "voice note", "voice message", "voicemail", "voice mail",
+            "audio message", "audio note", "send a text", "send text"
+        ]) or
+        ("send" in low and any(w in low for w in ["message", "msg", "text", "voice", "note"])) or
+        re.search(r'\b(message|text|msg|dm|ping)\s+to\b', low)
+    ) and not any(k in low for k in ["email", "gmail", "amazon", "flipkart", "youtube", "order"]):
         agent_beta.dispatch("whatsapp", query)
         return True
 
@@ -545,18 +852,21 @@ def point_break_master_brain(query: str, speak_fn=None, update_status_fn=None, i
         agent_gamma.dispatch("organize_workspace", query)
         return True
 
-    # ── INQUIRY: Which Sir / Who is Sir ──────────────────────────────
-    if any(k in low for k in ["which sir", "who is sir", "who is this sir", "who is your sir", "which sir?", "who is the sir", "what sir"]):
-        speech_arbiter.speak("Sir Daksh.", priority=2)
-        return True
-
     # ── GAMMA: God's Eye View / Orbital Satellite Reconnaissance ──────
     if any(k in low for k in [
-        "god's eye", "gods eye", "orbital reconnaissance", "satellite view",
+        "god's eye", "gods eye", "god eye", "godseye", "orbital reconnaissance", "satellite view",
         "satellite recon", "track flights on globe", "open 3d globe", "tactical globe",
         "orbital watch", "open satellite map", "global tracking"
-    ]) or re.search(r'\b(track|show|open)\b.*\b(satellite|globe|gods eye|god\'s eye|orbit)\b', low):
+    ]) or re.search(r'\b(track|show|open)\b.*\b(satellite|globe|gods?\s*eye|orbit)\b', low):
         agent_gamma.dispatch("gods_eye", query)
+        return True
+
+    # ── GAMMA: Global CCTV / Traffic Cameras Reconnaissance ──────────
+    if any(k in low for k in [
+        "cctv", "traffic cams", "traffic cameras", "traffic camera", "surveillance cams",
+        "webcams", "live cams", "street cameras", "highway cameras"
+    ]) or re.search(r'\b(show|open|view|watch|stream|feed)\b.*\b(cctv|traffic\s+cams?|traffic\s+cameras?|cameras?|webcams?)\b', low):
+        agent_gamma.dispatch("cctv_matrix", query)
         return True
 
     # ADB Phone commands (ONLY active if NOT commercial)

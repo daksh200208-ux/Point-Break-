@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>POINT BREAK // GOD'S EYE — GLOBAL LIVE SURVEILLANCE & LANDMARK MATRIX</title>
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@600;900&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        :root {
+            --bg: #020612;
+            --panel: rgba(11, 19, 38, 0.95);
+            --panel-border: rgba(0, 240, 255, 0.3);
+            --cyan: #00f0ff;
+            --green: #10b981;
+            --red: #ef4444;
+            --amber: #f59e0b;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background-color: var(--bg);
+            color: #e2e8f0;
+            font-family: 'Share Tech Mono', monospace;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(ellipse at 50% 0%, rgba(0, 240, 255, 0.08) 0%, transparent 70%),
+                linear-gradient(rgba(0, 240, 255, 0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 240, 255, 0.02) 1px, transparent 1px);
+            background-size: 100% 100%, 25px 25px, 25px 25px;
+        }
+        header {
+            padding: 12px 24px;
+            background: rgba(2, 6, 18, 0.98);
+            border-bottom: 1px solid var(--panel-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            backdrop-filter: blur(12px);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+        .brand {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 18px;
+            font-weight: 900;
+            letter-spacing: 2px;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .brand span { color: var(--cyan); text-shadow: 0 0 12px rgba(0, 240, 255, 0.6); }
+        .view-tabs {
+            display: flex;
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid var(--panel-border);
+            border-radius: 4px;
+            padding: 3px;
+            gap: 4px;
+        }
+        .view-tab {
+            padding: 6px 14px;
+            border: none;
+            background: transparent;
+            color: #94a3b8;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            border-radius: 3px;
+            transition: all 0.2s;
+        }
+        .view-tab.active {
+            background: var(--cyan);
+            color: #020612;
+            box-shadow: 0 0 10px rgba(0, 240, 255, 0.5);
+        }
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .network-btn {
+            padding: 5px 12px;
+            background: rgba(0, 240, 255, 0.12);
+            border: 1px solid var(--cyan);
+            color: var(--cyan);
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 11px;
+            font-weight: bold;
+            cursor: pointer;
+            border-radius: 4px;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+        .network-btn:hover {
+            background: var(--cyan);
+            color: #020612;
+            box-shadow: 0 0 12px rgba(0, 240, 255, 0.6);
+        }
+        .add-btn {
+            padding: 5px 12px;
+            background: rgba(16, 185, 129, 0.2);
+            border: 1px solid var(--green);
+            color: var(--green);
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 11px;
+            font-weight: bold;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+        .add-btn:hover {
+            background: var(--green);
+            color: #020612;
+            box-shadow: 0 0 12px rgba(16, 185, 129, 0.6);
+        }
+        .sector-bar {
+            padding: 10px 24px;
+            background: rgba(15, 23, 42, 0.85);
+            border-bottom: 1px solid var(--panel-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .sector-buttons {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .sector-btn {
+            padding: 4px 10px;
+            background: rgba(0, 240, 255, 0.08);
+            border: 1px solid var(--panel-border);
+            color: #cbd5e1;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 11px;
+            cursor: pointer;
+            border-radius: 3px;
+            transition: all 0.2s;
+        }
+        .sector-btn.active, .sector-btn:hover {
+            background: rgba(0, 240, 255, 0.25);
+            border-color: var(--cyan);
+            color: var(--cyan);
+        }
+        .shader-controls {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+        .shader-btn {
+            padding: 4px 10px;
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid var(--panel-border);
+            color: #94a3b8;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 11px;
+            cursor: pointer;
+            border-radius: 3px;
+            transition: all 0.2s;
+        }
+        .shader-btn.active {
+            background: var(--cyan);
+            color: #020612;
+            font-weight: bold;
+        }
+        .main-stage {
+            flex: 1;
+            position: relative;
+            display: flex;
+        }
+        #cctv-stage {
+            flex: 1;
+            padding: 20px 24px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+            gap: 20px;
+        }
+        #satellite-stage {
+            flex: 1;
+            height: calc(100vh - 120px);
+            display: none;
+            position: relative;
+        }
+        #leaflet-map {
+            width: 100%;
+            height: 100%;
+            background: #020612;
+        }
+        .cam-card {
+            background: var(--panel);
+            border: 1px solid var(--panel-border);
+            border-radius: 6px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.75);
+            transition: all 0.25s ease;
+        }
+        .cam-card:hover {
+            border-color: var(--cyan);
+            box-shadow: 0 8px 32px rgba(0, 240, 255, 0.3);
+        }
+        .cam-header {
+            padding: 10px 14px;
+            background: rgba(0, 0, 0, 0.65);
+            border-bottom: 1px solid var(--panel-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+        }
+        .cam-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #f8fafc;
+            font-weight: bold;
+        }
+        .rec-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--red);
+            border-radius: 50%;
+            display: inline-block;
+            box-shadow: 0 0 8px var(--red);
+            animation: blink 1.2s infinite;
+        }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+        .cam-badge {
+            padding: 2px 8px;
+            background: rgba(0, 240, 255, 0.1);
+            border: 1px solid var(--cyan);
+            color: var(--cyan);
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: bold;
+        }
+        .cam-badge-earthcam {
+            background: rgba(245, 158, 11, 0.15);
+            border-color: var(--amber);
+            color: var(--amber);
+        }
+        .cam-viewport {
+            position: relative;
+            background: #000;
+            aspect-ratio: 16 / 9;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .cam-video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border: none;
+            display: block;
+        }
+        .portal-preview {
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #070e22 0%, #020612 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            text-align: center;
+            gap: 12px;
+        }
+        .portal-icon {
+            font-size: 36px;
+        }
+        .portal-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 15px;
+            color: #fff;
+            font-weight: bold;
+        }
+        .portal-desc {
+            font-size: 11px;
+            color: #94a3b8;
+            max-width: 320px;
+            line-height: 1.4;
+        }
+        .portal-launch-btn {
+            padding: 7px 18px;
+            background: var(--cyan);
+            color: #020612;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 11px;
+            font-weight: 900;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            text-decoration: none;
+            box-shadow: 0 0 14px rgba(0, 240, 255, 0.5);
+            transition: all 0.2s;
+        }
+        .portal-launch-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.8);
+        }
+        /* Tactical Shaders */
+        .flir-active .cam-video {
+            filter: contrast(180%) saturate(250%) hue-rotate(185deg) invert(15%);
+        }
+        .nvg-active .cam-video {
+            filter: contrast(150%) brightness(120%) sepia(100%) hue-rotate(85deg) saturate(350%);
+        }
+        .hud-telemetry {
+            position: absolute;
+            bottom: 8px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 3px 8px;
+            border-left: 2px solid var(--cyan);
+            font-size: 11px;
+            color: var(--cyan);
+            z-index: 10;
+            pointer-events: none;
+        }
+        .hud-target-box {
+            position: absolute;
+            top: 25%;
+            left: 38%;
+            width: 90px;
+            height: 90px;
+            border: 1px dashed rgba(0, 240, 255, 0.8);
+            pointer-events: none;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            animation: pulse-target 3s infinite ease-in-out;
+            z-index: 10;
+        }
+        @keyframes pulse-target {
+            0%, 100% { transform: scale(1); border-color: rgba(0, 240, 255, 0.8); }
+            50% { transform: scale(1.05); border-color: rgba(16, 185, 129, 0.9); }
+        }
+        .target-label {
+            font-size: 8px;
+            background: rgba(0, 0, 0, 0.85);
+            color: var(--cyan);
+            padding: 1px 4px;
+            margin-top: -11px;
+            border: 1px solid var(--cyan);
+            white-space: nowrap;
+        }
+        .cam-footer {
+            padding: 8px 14px;
+            background: rgba(0, 0, 0, 0.6);
+            border-top: 1px solid var(--panel-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            color: #94a3b8;
+        }
+        .status-live { color: var(--green); font-weight: bold; }
+        .card-actions {
+            display: flex;
+            gap: 6px;
+        }
+        .action-btn {
+            background: transparent;
+            border: 1px solid var(--panel-border);
+            color: var(--cyan);
+            font-size: 11px;
+            padding: 2px 8px;
+            cursor: pointer;
+            border-radius: 3px;
+            font-family: 'Share Tech Mono', monospace;
+            text-decoration: none;
+        }
+        .action-btn:hover {
+            background: var(--cyan);
+            color: #020612;
+        }
+        .crosshair-tl, .crosshair-tr, .crosshair-bl, .crosshair-br {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            border-color: rgba(0, 240, 255, 0.6);
+            pointer-events: none;
+            z-index: 10;
+        }
+        .crosshair-tl { top: 8px; left: 8px; border-top: 2px solid var(--cyan); border-left: 2px solid var(--cyan); }
+        .crosshair-tr { top: 8px; right: 8px; border-top: 2px solid var(--cyan); border-right: 2px solid var(--cyan); }
+        .crosshair-bl { bottom: 8px; left: 8px; border-bottom: 2px solid var(--cyan); border-left: 2px solid var(--cyan); }
+        .crosshair-br { bottom: 8px; right: 8px; border-bottom: 2px solid var(--cyan); border-right: 2px solid var(--cyan); }
+        
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(2, 6, 18, 0.85);
+            backdrop-filter: blur(8px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+        .modal {
+            background: var(--panel);
+            border: 1px solid var(--cyan);
+            box-shadow: 0 0 24px rgba(0, 240, 255, 0.4);
+            border-radius: 8px;
+            width: 90%;
+            max-width: 520px;
+            padding: 24px;
+        }
+        .modal h2 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 16px;
+            color: var(--cyan);
+            margin-bottom: 16px;
+        }
+        .form-group {
+            margin-bottom: 14px;
+        }
+        .form-group label {
+            display: block;
+            font-size: 12px;
+            color: #94a3b8;
+            margin-bottom: 4px;
+        }
+        .form-control {
+            width: 100%;
+            padding: 8px 12px;
+            background: rgba(2, 6, 18, 0.9);
+            border: 1px solid var(--panel-border);
+            color: #fff;
+            font-family: 'Share Tech Mono', monospace;
+            border-radius: 4px;
+            outline: none;
+        }
+        .form-control:focus {
+            border-color: var(--cyan);
+            box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
+        }
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        footer {
+            padding: 12px 24px;
+            background: rgba(2, 6, 18, 0.98);
+            border-top: 1px solid var(--panel-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            color: #94a3b8;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="brand">POINT BREAK // <span>GOD'S EYE TACTICAL SUITE</span></div>
+        <div class="view-tabs">
+            <button class="view-tab active" onclick="switchView('cctv')">📹 LIVE CCTV & LANDMARK WALL</button>
+            <button class="view-tab" onclick="switchView('satellite')">🛰️ SATELLITE RECON & RADAR</button>
+        </div>
+        <div class="header-actions">
+            <a href="https://www.earthcam.com/usa/newyork/timessquare/?cam=tsrobo1" target="_blank" class="network-btn">🌐 EARTHCAM 4K (TIMES SQ)</a>
+            <a href="https://www.skylinewebcams.com" target="_blank" class="network-btn">🌐 SKYLINEWEBCAMS GLOBAL</a>
+            <button class="add-btn" onclick="openAddFeedModal()">➕ ADD FEED</button>
+        </div>
+    </header>
+
+    <div class="sector-bar">
+        <div class="sector-buttons" id="sectorButtons">
+            <button class="sector-btn active" onclick="selectSector('all')">🌐 ALL FEEDS</button>
+            <button class="sector-btn" onclick="selectSector('landmarks')">⭐ LANDMARKS (TIMES SQ / LONDON)</button>
+            <button class="sector-btn" onclick="selectSector('live_hls')">🔴 LIVE DIRECT HLS FEEDS</button>
+        </div>
+        <div class="shader-controls">
+            <span style="font-size: 11px; color: #94a3b8;">SENSOR MODE:</span>
+            <button class="shader-btn active" onclick="setShader('optical')">OPTICAL</button>
+            <button class="shader-btn" onclick="setShader('flir')">FLIR (THERMAL)</button>
+            <button class="shader-btn" onclick="setShader('nvg')">NVG (NIGHT)</button>
+        </div>
+    </div>
+
+    <div class="main-stage">
+        <div id="cctv-stage"></div>
+        <div id="satellite-stage">
+            <div id="leaflet-map"></div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="addModal">
+        <div class="modal">
+            <h2>➕ CONFIGURE PUBLIC CAMERA / HLS FEED</h2>
+            <div class="form-group">
+                <label>CAMERA NAME / LOCATION TITLE:</label>
+                <input type="text" id="feedTitle" class="form-control" placeholder="e.g. Times Square Overwatch" />
+            </div>
+            <div class="form-group">
+                <label>CATEGORY / SECTOR:</label>
+                <select id="feedSector" class="form-control">
+                    <option value="landmarks">LANDMARKS</option>
+                    <option value="live_hls">LIVE DIRECT HLS</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>STREAM TYPE:</label>
+                <select id="feedType" class="form-control">
+                    <option value="URBAN CORE">URBAN CORE</option>
+                    <option value="HIGHWAY">HIGHWAY</option>
+                    <option value="CHOKEPOINT">CHOKEPOINT</option>
+                    <option value="COASTAL">COASTAL</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>PUBLIC STREAM URL (.m3u8 HLS):</label>
+                <input type="text" id="feedUrl" class="form-control" placeholder="https://example.com/live/master.m3u8" />
+            </div>
+            <div class="modal-actions">
+                <button class="action-btn" onclick="closeAddFeedModal()">CANCEL</button>
+                <button class="add-btn" onclick="saveNewFeed()">SAVE FEED</button>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <div>POINT BREAK OSINT & OPTICAL SURVEILLANCE // GOD'S EYE PROTOCOL v3.2</div>
+        <div id="statusTelemetry">CONNECTED TO EARTHCAM, SKYLINEWEBCAMS & DIRECT LIVE STREAMS</div>
+    </footer>
+
+    <script>
+        const FEEDS_DATABASE = [
+            {
+                id: 'EC-NYC',
+                category: 'landmarks',
+                title: 'New York // Times Square 4K Ultra-HD (EarthCam)',
+                type: 'EARTHCAM 4K',
+                isPortal: true,
+                portalUrl: 'https://www.earthcam.com/usa/newyork/timessquare/?cam=tsrobo1',
+                lat: 40.7580, lon: -73.9855,
+                icon: '🗽',
+                desc: 'Official 24/7 4K live streaming camera overlooking Times Square, Broadway & 42nd Street.'
+            },
+            {
+                id: 'SL-LDN',
+                category: 'landmarks',
+                title: 'London // Westminster & Tower Bridge (SkylineWebcams)',
+                type: 'SKYLINE LIVE',
+                isPortal: true,
+                portalUrl: 'https://www.skylinewebcams.com/en/webcam/united-kingdom/england/london/tower-bridge.html',
+                lat: 51.5055, lon: -0.0754,
+                icon: '🇬🇧',
+                desc: 'Live 24/7 ultra-low latency optical stream overlooking the River Thames and London Tower Bridge.'
+            },
+            {
+                id: 'SL-TYO',
+                category: 'landmarks',
+                title: 'Tokyo // Shibuya Scramble Crossing 4K Live',
+                type: 'SKYLINE LIVE',
+                isPortal: true,
+                portalUrl: 'https://www.youtube.com/watch?v=H-3c9B4iFp8',
+                lat: 35.6595, lon: 139.7005,
+                icon: '🇯🇵',
+                desc: 'Real-time 24/7 optical surveillance over Tokyo Shibuya pedestrian scramble intersection.'
+            },
+            {
+                id: 'CAM-01',
+                category: 'live_hls',
+                title: 'Urban Center // Live Outdoor City Street Overwatch',
+                type: 'LIVE HLS',
+                isPortal: false,
+                lat: 41.3851, lon: 2.1734,
+                streamUrl: 'https://directes-tv-int.3catdirectes.cat/live-content/beauties-hls/master.m3u8'
+            },
+            {
+                id: 'CAM-02',
+                category: 'live_hls',
+                title: 'Alpine Valley // Live Outdoor Landscape & Transit Camera',
+                type: 'LIVE HLS',
+                isPortal: false,
+                lat: 47.3060, lon: 10.3470,
+                streamUrl: 'https://h057.video-stream-hosting.de/tourismusverbandlechtal-rtplive/_definst_/mp4:camera3.stream/chunklist_w1581120379.m3u8'
+            },
+            {
+                id: 'CAM-03',
+                category: 'live_hls',
+                title: 'Coastal Waterfront // Live Ocean Overwatch Camera',
+                type: 'LIVE HLS',
+                isPortal: false,
+                lat: 13.0760, lon: -59.5980,
+                streamUrl: 'https://stream.iwcpinc.com/IWCP_NCC/_definst_/NCC_Hastings_2.stream/playlist.m3u8'
+            }
+        ];
+
+        let currentSector = 'all';
+        let currentShader = 'optical';
+        let mapInstance = null;
+
+        function renderCCTVCards() {
+            const container = document.getElementById('cctv-stage');
+            const filtered = currentSector === 'all' ? FEEDS_DATABASE : FEEDS_DATABASE.filter(c => c.category === currentSector);
+
+            container.innerHTML = '';
+            filtered.forEach((cam) => {
+                const card = document.createElement('div');
+                card.className = 'cam-card';
+                card.id = `card-${cam.id}`;
+
+                if (cam.isPortal) {
+                    card.innerHTML = `
+                        <div class="cam-header">
+                            <div class="cam-title"><span class="rec-dot"></span> FEED [${cam.id}] // ${cam.title}</div>
+                            <div class="cam-badge cam-badge-earthcam">${cam.type}</div>
+                        </div>
+                        <div class="cam-viewport">
+                            <div class="portal-preview">
+                                <div class="portal-icon">${cam.icon}</div>
+                                <div class="portal-title">${cam.title}</div>
+                                <div class="portal-desc">${cam.desc}</div>
+                                <a href="${cam.portalUrl}" target="_blank" class="portal-launch-btn">⚡ LAUNCH 4K LIVE STREAM</a>
+                            </div>
+                            <div class="crosshair-tl"></div><div class="crosshair-tr"></div>
+                            <div class="crosshair-bl"></div><div class="crosshair-br"></div>
+                            <div class="hud-telemetry">LAT: ${(cam.lat || 0).toFixed(4)} | LON: ${(cam.lon || 0).toFixed(4)} | STATUS: 4K HIGH RES</div>
+                        </div>
+                        <div class="cam-footer">
+                            <span>NETWORK: OFFICIAL 24/7 OVERWATCH</span>
+                            <div class="card-actions">
+                                <a href="${cam.portalUrl}" target="_blank" class="action-btn">🔗 OPEN SOURCE</a>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    card.innerHTML = `
+                        <div class="cam-header">
+                            <div class="cam-title"><span class="rec-dot"></span> FEED [${cam.id}] // ${cam.title}</div>
+                            <div class="cam-badge">${cam.type}</div>
+                        </div>
+                        <div class="cam-viewport" id="vp-${cam.id}">
+                            <video class="cam-video" id="video-${cam.id}" autoplay loop muted playsinline></video>
+                            <div class="crosshair-tl"></div><div class="crosshair-tr"></div>
+                            <div class="crosshair-bl"></div><div class="crosshair-br"></div>
+                            <div class="hud-telemetry">LAT: ${(cam.lat || 0).toFixed(4)} | LON: ${(cam.lon || 0).toFixed(4)} | STREAM: LIVE HLS</div>
+                            <div class="hud-target-box">
+                                <div class="target-label">TRK-${cam.id} [LIVE]</div>
+                            </div>
+                        </div>
+                        <div class="cam-footer">
+                            <span>SIGNAL: OPTICAL EO/IR (LIVE HLS STREAM)</span>
+                            <div class="card-actions">
+                                <button class="action-btn" onclick="toggleFullscreen('vp-${cam.id}')">⛶ FULLSCREEN</button>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                container.appendChild(card);
+
+                if (!cam.isPortal) {
+                    const videoEl = document.getElementById(`video-${cam.id}`);
+                    const src = cam.streamUrl;
+
+                    if (Hls.isSupported()) {
+                        const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+                        hls.loadSource(src);
+                        hls.attachMedia(videoEl);
+                        hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                            videoEl.play().catch(()=>{});
+                        });
+                    } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+                        videoEl.src = src;
+                        videoEl.play().catch(()=>{});
+                    }
+                }
+            });
+
+            document.getElementById('statusTelemetry').textContent = `ACTIVE SURVEILLANCE CHANNELS: ${filtered.length} NODES ONLINE`;
+        }
+
+        function selectSector(sector) {
+            currentSector = sector;
+            document.querySelectorAll('.sector-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.getAttribute('onclick').includes(sector));
+            });
+            renderCCTVCards();
+        }
+
+        function setShader(mode) {
+            currentShader = mode;
+            const stage = document.getElementById('cctv-stage');
+            stage.classList.remove('flir-active', 'nvg-active');
+            if (mode === 'flir') stage.classList.add('flir-active');
+            if (mode === 'nvg') stage.classList.add('nvg-active');
+
+            document.querySelectorAll('.shader-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.getAttribute('onclick').includes(mode));
+            });
+        }
+
+        function toggleFullscreen(vpId) {
+            const el = document.getElementById(vpId);
+            if (!document.fullscreenElement) {
+                el.requestFullscreen().catch(()=>{});
+            } else {
+                document.exitFullscreen().catch(()=>{});
+            }
+        }
+
+        function switchView(view) {
+            document.querySelectorAll('.view-tab').forEach(t => {
+                t.classList.toggle('active', t.getAttribute('onclick').includes(view));
+            });
+            const cctv = document.getElementById('cctv-stage');
+            const sat = document.getElementById('satellite-stage');
+            const secBar = document.querySelector('.sector-bar');
+
+            if (view === 'cctv') {
+                cctv.style.display = 'grid';
+                sat.style.display = 'none';
+                secBar.style.display = 'flex';
+            } else {
+                cctv.style.display = 'none';
+                sat.style.display = 'block';
+                secBar.style.display = 'none';
+                initSatelliteMap();
+            }
+        }
+
+        function openAddFeedModal() {
+            document.getElementById('addModal').style.display = 'flex';
+        }
+
+        function closeAddFeedModal() {
+            document.getElementById('addModal').style.display = 'none';
+        }
+
+        function saveNewFeed() {
+            const title = document.getElementById('feedTitle').value.trim();
+            const sector = document.getElementById('feedSector').value;
+            const type = document.getElementById('feedType').value;
+            const url = document.getElementById('feedUrl').value.trim();
+
+            if (!title || !url) {
+                alert('Please enter a Title and a valid stream URL.');
+                return;
+            }
+
+            const newId = `CAM-${FEEDS_DATABASE.length + 1}`;
+            FEEDS_DATABASE.unshift({
+                id: newId,
+                category: sector,
+                title: title,
+                type: type,
+                isPortal: false,
+                lat: 28.6139 + Math.random() * 5,
+                lon: 77.2090 + Math.random() * 5,
+                streamUrl: url
+            });
+
+            closeAddFeedModal();
+            renderCCTVCards();
+        }
+
+        function initSatelliteMap() {
+            if (mapInstance) {
+                mapInstance.invalidateSize();
+                return;
+            }
+            mapInstance = L.map('leaflet-map').setView([22.0, 78.0], 4);
+            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Esri, Maxar, Earthstar Geographics',
+                maxZoom: 18
+            }).addTo(mapInstance);
+
+            FEEDS_DATABASE.forEach(cam => {
+                const marker = L.circleMarker([cam.lat || 0, cam.lon || 0], {
+                    color: '#00f0ff',
+                    fillColor: '#00f0ff',
+                    fillOpacity: 0.8,
+                    radius: 7
+                }).addTo(mapInstance);
+
+                marker.bindPopup(`
+                    <div style="font-family: 'Share Tech Mono', monospace; color: #020612;">
+                        <strong>${cam.title}</strong><br>
+                        <span>LAT: ${cam.lat} | LON: ${cam.lon}</span><br>
+                        <span style="color: green; font-weight: bold;">● LIVE SURVEILLANCE NODE</span>
+                    </div>
+                `);
+            });
+        }
+
+        window.onload = () => {
+            renderCCTVCards();
+        };
+    </script>
+</body>
+</html>
