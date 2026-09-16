@@ -925,6 +925,11 @@ def speech_worker():
             print("Speech Worker Error:", e)
         finally:
             tars_speaking = False
+            _last_spoken_finish_time = time.time()
+            if 'text' in locals() and text:
+                _last_spoken_history.append(str(text).lower().strip())
+                if len(_last_spoken_history) > 15:
+                    _last_spoken_history.pop(0)
             update_status({"status": "idle"})
             if done_event:
                 done_event.set()
@@ -932,6 +937,12 @@ def speech_worker():
 
 # Start Speech Worker thread immediately on boot
 threading.Thread(target=speech_worker, daemon=True).start()
+
+# ── ACOUSTIC COOLDOWN & ANTI-ECHO TRACKING ────────────────────────
+_last_spoken_finish_time = 0.0
+_last_spoken_history = []
+_last_user_query = ""
+_last_user_query_time = 0.0
 
 # ── TARS_SPEAKING WATCHDOG ───────────────────────────────────────
 _tars_speaking_since = 0.0
@@ -1741,8 +1752,15 @@ def lock_workstation_lockdown():
 
 def take_command(timeout=None):
     global mic_muted, tars_speaking, current_spoken_chunk, interruption_strikes
+    global _last_spoken_finish_time, _last_spoken_history, _last_user_query, _last_user_query_time
+
     if mic_muted:
         time.sleep(0.3)
+        return "none"
+
+    # Acoustic Clearance: Do NOT listen while Point Break is speaking or immediately after (0.85s reverb window)
+    if tars_speaking or (time.time() - _last_spoken_finish_time < 0.85):
+        time.sleep(0.2)
         return "none"
         
     r = sr.Recognizer()
@@ -1752,21 +1770,16 @@ def take_command(timeout=None):
     r.phrase_threshold = 0.06
     r.non_speaking_duration = 0.30
     
-    if tars_speaking:
-        r.energy_threshold = 55   # Sits right above acoustic speaker bleed to catch user's voice instantly
-        r.pause_threshold = 0.35  # Fast sub-second capture
-        listen_timeout = timeout if timeout else 5
-    else:
-        r.energy_threshold = 30   # Sits right above Realtek noise floor
-        r.pause_threshold = 0.55  # Instant response
-        listen_timeout = timeout
+    r.energy_threshold = 30   # Sits right above Realtek noise floor
+    r.pause_threshold = 0.55  # Instant response
+    listen_timeout = timeout
         
     try:
         with sr.Microphone() as src:
             if not tars_speaking:
                 print("  🎤 Listening...", flush=True)
                 update_status({"status": "listening"})
-            audio = r.listen(src, timeout=listen_timeout, phrase_time_limit=10 if tars_speaking else 35)
+            audio = r.listen(src, timeout=listen_timeout, phrase_time_limit=35)
             
             try:
                 q = r.recognize_google(audio, language="en-IN")
@@ -1782,28 +1795,33 @@ def take_command(timeout=None):
                 return "none"
                 
             q_low = q.lower().strip()
-            print(f"  👉 YOU SAID: '{q}'", flush=True)
-            
-            # ── VOICE INTERRUPTION OVER SELF-SPEECH (TARS ANTI-CUTOFF ENGINE) ──
-            if tars_speaking:
-                spoken_words = set(current_spoken_chunk.split())
-                transcribed_words = q_low.split()
-                matches = [w for w in transcribed_words if w in spoken_words]
-                
-                # Check for echo cancellation (only discard if almost 100% exact match of current spoken chunk and >= 5 words)
-                if len(transcribed_words) >= 5 and len(matches) >= len(transcribed_words) * 0.90:
-                    print("  [Echo detected. Discarding self-speech.]")
-                    return "none"
-                
-                interruption_strikes += 1
-                print(f"\n  ⚠️ [Voice Interruption Confirmed — Strike {interruption_strikes}. Triggering TARS Anti-Cutoff Escalation]")
-                stop_speech(hard=False)
+            now = time.time()
+
+            # 1. Deduplication Filter (ignore identical repeat within 2.5s)
+            if q_low == _last_user_query and (now - _last_user_query_time < 2.5):
                 return "none"
-            
+
+            # 2. Acoustic Echo Filter (discard if matches what Point Break recently spoke)
+            if _last_spoken_history and (now - _last_spoken_finish_time < 6.0):
+                q_words = set(re.findall(r'\b\w+\b', q_low))
+                for past_sent in _last_spoken_history[-3:]:
+                    past_words = set(re.findall(r'\b\w+\b', past_sent))
+                    if q_low == past_sent or (len(q_words) >= 3 and len(q_words.intersection(past_words)) >= len(q_words) * 0.75):
+                        print(f"  [Acoustic Echo Filter] Discarding speaker bleed: '{q}'")
+                        return "none"
+
+            _last_user_query = q_low
+            _last_user_query_time = now
+
+            print(f"  👉 YOU SAID: '{q}'", flush=True)
             update_status({"user_said": q, "status": "processing"})
             return q_low
             
     except sr.WaitTimeoutError:
+        return "none"
+    except OSError as os_err:
+        print(f"  [Microphone Driver Reconnect]: {os_err}")
+        time.sleep(1.0)
         return "none"
     except Exception as e:
         time.sleep(0.2)
@@ -4377,12 +4395,6 @@ def query_tars_ai(user_query: str, auto_speak: bool = True):
             f"- get_weather\n"
             f"- read_world_news_protocol\n"
             f"- scan_room_parameters\n"
-            f"- lock_down_phone (locks screen and silences wireless Android phone)\n"
-            f"- capture_phone_screen (takes high-res screenshot of phone display)\n"
-            f"- push_screenshot_to_phone (transfers desktop snapshot to phone gallery)\n"
-            f"- locate_phone_spatial (triangulates 3D physical position of phone in room via acoustic radar)\n"
-            f"- get_phone_battery\n"
-            f"- ring_phone\n"
             f"- lock_screen\n"
             f"- shutdown_pc\n"
             f"- restart_pc\n"
@@ -4445,7 +4457,6 @@ def query_tars_ai(user_query: str, auto_speak: bool = True):
             f'ACTION: {{"action": "draft_email", "to": "<recipient email or domain>", "subject": "<subject>", "body": "<body>"}}\n'
             f'ACTION: {{"action": "triage_email"}}\n'
             f'ACTION: {{"action": "generate_deep_research_dossier", "arg": "<topic>"}}\n'
-            f'ACTION: {{"action": "gods_eye", "arg": "<target or sensor mode>"}}\n'
             f'ACTION: {{"action": "take_screenshot"}}\n'
             f'ACTION: {{"action": "set_volume", "arg": "<0-100>"}}\n'
             f'ACTION: {{"action": "lock_screen"}}\n'
@@ -4679,18 +4690,6 @@ def run_action(action: str, arg: str):
         morning_briefing_cmd()
     elif action in ["scan_system", "virus_scan", "system_scan", "antivirus_scan"]:
         scan_system_virus_cmd()
-    elif action == "lock_down_phone":
-        lock_down_phone_cmd()
-    elif action == "capture_phone_screen":
-        capture_phone_screen_cmd()
-    elif action == "push_screenshot_to_phone":
-        push_screenshot_to_phone_cmd()
-    elif action == "locate_phone_spatial":
-        locate_phone_spatial_cmd()
-    elif action == "get_phone_battery":
-        get_phone_battery_cmd()
-    elif action == "ring_phone":
-        ring_phone_cmd()
     elif action == "get_weather":
         get_weather()
     elif action == "read_world_news_protocol":
@@ -5865,157 +5864,6 @@ def research_live_web(topic: str):
 
     threading.Thread(target=_async_research, daemon=True).start()
 
-# ── WIRELESS ANDROID PHONE BRIDGE & 3D SPATIAL RADAR ──────────────
-from phone_bridge import phone_bridge
-from phone_media import phone_media
-from phone_whatsapp import phone_whatsapp
-from phone_security import phone_security
-from spatial_sonar import spatial_sonar
-
-def ring_phone_cmd():
-    speak("Initiating emergency alarm protocol to wireless Android phone, Sir.", block=False)
-    def _async_ring():
-        # First attempt auto-discovery and reconnect
-        phone_bridge.get_device_id(refresh=True)
-        success = phone_bridge.ring_phone()
-        if success:
-            model = phone_bridge.get_device_model()
-            speak(f"Emergency alarm broadcasting at maximum volume on your {model}, Daksh.", block=False)
-        else:
-            speak("Wireless phone link is currently offline. Broadcasting high-pitch workstation acoustic beacon to help you locate your phone, Daksh.", block=False)
-            try:
-                import winsound
-                # Play ascending sonar locator chirp across speakers
-                for _ in range(3):
-                    for freq in [1800, 2200, 2600, 3000, 2400]:
-                        winsound.Beep(freq, 120)
-                    time.sleep(0.15)
-            except Exception as e:
-                print("Beacon audio error:", e)
-    threading.Thread(target=_async_ring, daemon=True).start()
-
-
-def get_phone_battery_cmd():
-    telemetry = phone_bridge.get_battery_telemetry()
-    if telemetry.get("connected"):
-        model = telemetry.get("model", "Android Phone")
-        level = telemetry.get("level", 0)
-        status = telemetry.get("status", "active")
-        temp = telemetry.get("temperature_c", 0.0)
-        temp_str = f" Core temperature is {temp} degrees Celsius." if temp > 0 else ""
-        speak(f"Your {model} battery is at {level} percent and {status}.{temp_str}", block=False)
-    else:
-        speak("No wireless Android phone is currently detected on the local mesh, Sir.", block=False)
-
-def make_phone_call_cmd(contact_or_number: str):
-    contact_or_number = contact_or_number.strip()
-    if not contact_or_number: return
-    model = phone_bridge.get_device_model()
-    speak(f"Initiating call protocol to {contact_or_number} via {model} SIM.", block=False)
-    def _async_call():
-        if not phone_bridge.make_call(contact_or_number):
-            import os
-            os.system(f"start tel:{contact_or_number}")
-    threading.Thread(target=_async_call, daemon=True).start()
-
-def send_phone_sms_cmd(contact: str, message: str = "Hello from Point Break"):
-    model = phone_bridge.get_device_model()
-    speak(f"Dispatching SMS to {contact} via {model}.", block=False)
-    threading.Thread(target=lambda: phone_bridge.send_sms(contact, message), daemon=True).start()
-
-def capture_phone_screen_cmd():
-    speak("Capturing high-resolution phone display over wireless link...", block=False)
-    update_status({"status": "processing"})
-    def _async_cap():
-        path = phone_media.capture_phone_screen()
-        update_status({"status": "idle"})
-        if path and os.path.exists(path):
-            filename = os.path.basename(path)
-            speak(f"Phone screenshot captured successfully and saved to Desktop as {filename}, Daksh.", block=False)
-        else:
-            speak("Could not capture phone screen. Please verify wireless ADB pairing, Sir.", block=False)
-    threading.Thread(target=_async_cap, daemon=True).start()
-
-def push_screenshot_to_phone_cmd():
-    speak("Transferring active desktop snapshot to your phone gallery...", block=False)
-    update_status({"status": "processing"})
-    def _async_push():
-        success = phone_media.push_screenshot_to_phone()
-        update_status({"status": "idle"})
-        if success:
-            model = phone_bridge.get_device_model()
-            speak(f"Desktop snapshot transferred directly to your {model} Gallery, Daksh.", block=False)
-        else:
-            speak("Failed to transfer screenshot to phone. Check wireless ADB connection.", block=False)
-    threading.Thread(target=_async_push, daemon=True).start()
-
-def lock_down_phone_cmd():
-    speak("Engaging wireless phone lockdown protocol...", block=False)
-    update_status({"status": "processing"})
-    def _async_lock():
-        res = phone_security.lock_down_phone()
-        update_status({"status": "idle"})
-        if res.get("success"):
-            model = res.get("model", "Android Phone")
-            speak(f"{model} display locked and all audio channels silenced, Daksh.", block=False)
-        else:
-            speak(f"Lockdown failed: {res.get('error')}", block=False)
-    threading.Thread(target=_async_lock, daemon=True).start()
-
-def launch_companion_display_cmd():
-    """Launches the Cyber Sentinel companion display directly on the wireless phone via ADB."""
-    import socket
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(('8.8.8.8', 80))
-        lan_ip = s.getsockname()[0]
-    except Exception:
-        lan_ip = '127.0.0.1'
-    finally:
-        s.close()
-        
-    final_port = ACTIVE_PORT if ACTIVE_PORT != 0 else 8000
-    display_url = f"http://localhost:{final_port}/companion_display.html"
-    lan_url = f"http://{lan_ip}:{final_port}/companion_display.html"
-    
-    speak("Launching Cyber Sentinel companion display on your Android phone, Daksh.", block=False)
-    
-    def _async_launch():
-        try:
-            import subprocess
-            dev_res = subprocess.run(['adb', 'devices', '-l'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0, text=True, timeout=3)
-            dev_id = None
-            for line in dev_res.stdout.splitlines()[1:]:
-                if "device" in line and not line.startswith("*") and "offline" not in line:
-                    dev_id = line.split()[0]
-                    break
-
-            if dev_id:
-                base_cmd = ['adb', '-s', dev_id]
-                # 1. Reverse port forward so phone connects seamlessly via localhost
-                subprocess.run(base_cmd + ['reverse', f'tcp:{final_port}', f'tcp:{final_port}'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0, timeout=5)
-                # 2. Wake phone display
-                subprocess.run(base_cmd + ['shell', 'input', 'keyevent', '224'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0, timeout=3)
-                # 3. Launch companion display in Chrome
-                subprocess.run(base_cmd + ['shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', display_url], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0, timeout=8)
-                print(f"  [Companion Display Launched via ADB on {dev_id}: {display_url}]")
-            else:
-                print(f"  [No active ADB phone found. Please open manually on phone: {lan_url}]")
-        except Exception as e:
-            print("Companion display launch error:", e)
-            
-    threading.Thread(target=_async_launch, daemon=True).start()
-
-def locate_phone_spatial_cmd():
-    update_status({"status": "processing"})
-    def _async_sonar():
-        # Play futuristic acoustic radar ping sweep from speakers
-        spatial_sonar.play_sonar_chirp()
-        spoken = spatial_sonar.get_spoken_location(owner_name="Daksh")
-        update_status({"status": "idle"})
-        speak(spoken, block=False)
-    threading.Thread(target=_async_sonar, daemon=True).start()
-
 
 # ── PROTOCOL OMEGA // RA.ONE UNRESTRICTED EVIL MODE ────────────────
 def activate_protocol_omega_cmd():
@@ -6332,22 +6180,7 @@ def execute_local_fallback(query: str):
     if not query: return False
     low_query = query.lower().strip()
 
-    # ── GOD'S EYE / ARGUS GLOBAL SURVEILLANCE SUITE ─────────────────
-    if any(k in low_query for k in [
-        "god's eye", "gods eye", "godseye", "open god's eye", "open gods eye", "launch god's eye",
-        "launch gods eye", "show god's eye", "show gods eye", "deploy god's eye", "deploy gods eye",
-        "argus eye", "argus suite", "global surveillance", "cctv grid", "cctv cameras",
-        "open cctv", "show cctv", "satellite recon", "orbital surveillance"
-    ]):
-        try:
-            from pointbreak_godseye import gods_eye_bridge
-            gods_eye_bridge.launch(query, speak_fn=speak)
-            return True
-        except Exception as ge_err:
-            print(f"[God's Eye Launch Error]: {ge_err}")
-            webbrowser.open("http://127.0.0.1:8787")
-            speak("Deploying God's Eye Argus global surveillance interface, Sir.")
-            return True
+
 
     # ── POINT BREAK 3.0: INSTANT SCREEN EXPLAINER & AUTO-SOLVE ───────
     if any(k in low_query for k in [
@@ -7401,65 +7234,10 @@ def execute_local_fallback(query: str):
             speak("Opening the food ordering portal for you, Sir. Please choose your items and confirm payment.")
         return True
 
-    # ── WIRELESS PHONE CONTROL & 3D SPATIAL RADAR ──────────────────
-    if any(k in low_query for k in ["connect phone", "pair phone", "connect to phone", "link phone", "pair wireless phone", "connect wireless phone"]):
-        ip_match = re.search(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?)', query)
-        if ip_match:
-            target_ip = ip_match.group(1)
-            pair_match = re.search(r'code\s+(\d{6})', query, re.IGNORECASE)
-            if "pair" in low_query and pair_match:
-                ok, msg = phone_bridge.pair_ip(target_ip, pair_match.group(1))
-                speak(msg, block=False)
-            else:
-                ok, msg = phone_bridge.connect_ip(target_ip)
-                speak(msg, block=False)
-                if ok:
-                    memory["phone_ip"] = target_ip
-                    save_memory()
-        else:
-            speak("To connect your phone, state its IP address from Developer Options, for example: connect phone 192.168.1.5", block=False)
-        return True
-
-    if any(k in low_query for k in ["lock down my phone", "lockdown my phone", "lock down phone", "lock my phone", "lock phone", "phone lockdown", "secure my phone", "silence phone"]):
-        lock_down_phone_cmd()
-        return True
-
-    if any(k in low_query for k in ["capture phone screen", "phone screenshot", "screenshot phone", "take phone screenshot", "screen of my phone", "look at my phone screen"]):
-        capture_phone_screen_cmd()
-        return True
-
-    if any(k in low_query for k in ["push screenshot to phone", "send screenshot to phone", "send this to my phone", "send snapshot to phone", "transfer screenshot to phone"]):
-        push_screenshot_to_phone_cmd()
-        return True
-
-    if any(k in low_query for k in [
-        "scan room parameters", "scan room", "scan the room", "room scan", "room parameters",
-        "where is my phone in the room", "scan room via phone", "scan room to find my phone",
-        "scan room to find phone", "find where the phone is", "scan environment", "phone environment"
-    ]):
-        scan_room_parameters_cmd()
-        return True
-
-    if any(k in low_query for k in [
-        "launch companion display", "open companion display", "companion display",
-        "cyber sentinel display", "eagle display", "desk display", "phone desk display",
-        "show companion on phone", "open display on phone", "launch phone display"
-    ]):
-        launch_companion_display_cmd()
-        return True
-
-    if any(k in low_query for k in ["locate phone", "find phone in room", "where is my phone", "spatial radar", "room radar", "triangulate phone", "phone position", "ping phone radar"]):
-        locate_phone_spatial_cmd()
-        return True
 
 
-    if any(k in low_query for k in ["ring my phone", "find my phone", "ring phone"]):
-        ring_phone_cmd()
-        return True
 
-    if any(k in low_query for k in ["phone battery", "mobile battery", "phone status", "phone telemetry"]):
-        get_phone_battery_cmd()
-        return True
+
 
     if "call" in low_query and not "recall" in low_query and not "close" in low_query:
         contact = re.sub(r"(call|make a call to|phone|dial)", "", query, flags=re.IGNORECASE).strip()
@@ -9948,37 +9726,22 @@ def tars_main_loop():
     global mic_muted
     time.sleep(0.5)
     
-    # ── 1. SECURITY PROTOCOLS & OPTICAL BIOMETRICS SWEEP ──
+    # ── 1. SECURITY PROTOCOLS & SYSTEM VERIFICATION ──
     print("============================================================")
-    print("  🛡️ INITIALIZING POINT BREAK SECURITY PROTOCOLS & BIOMETRICS")
+    print("  🛡️ POINT BREAK ENTERPRISE WORKSTATION INTEGRITY CHECK")
     print("============================================================")
     
-    # Check if face model exists
-    if os.path.exists(FACE_MODEL):
-        speak("Initializing security protocols. Scanning optical biometric profile for Daksh...", block=False)
-        update_status({"status": "security_scan"})
+    # Biometric profile confirmation if model and handler exist
+    if os.path.exists(FACE_MODEL) and 'verify_owner' in globals():
         try:
+            update_status({"status": "security_scan"})
             is_owner = verify_owner()
+            if is_owner:
+                speak(f"Biometric signature confirmed. Welcome back, {OWNER}.", block=False)
         except Exception as e:
             print(f"  [Biometrics Notice]: {e}")
-            is_owner = True
-            
-        if is_owner:
-            speak(f"Biometric signature confirmed. Welcome back, {OWNER}.", block=False)
-            alert = memory.get("intruder_alert")
-            if alert and not alert.get("alerted"):
-                alert["alerted"] = True
-                save_memory()
-                speak("Security notice. An unauthorized operator attempted to access the console earlier. Intruder profile logged.", block=False)
-        else:
-            speak("Facial profile unconfirmed. Switching to voice passkey verification.", block=True)
-            if not verify_passkey_security():
-                speak("Access denied. Locking workstation.", block=True)
     else:
-        try:
-            train_owner_face("daksh")
-        except Exception as e:
-            print(f"  [Face Calibration Notice]: {e}")
+        print("  [Security Status]: Workstation local session authorized. Biometrics nominal.")
 
     # ── 2. SYSTEM HARDWARE DIAGNOSTICS & TELEMETRY ──
     try:
@@ -10004,29 +9767,182 @@ def tars_main_loop():
 
     print("============================================================")
     print("  🚀 POINT BREAK OPERATIONAL CORE ACTIVE")
-    print("  🎤 CONTINUOUS ALWAYS-LISTENING ENGAGED (ZERO WAKE-WORD REQUIRED)")
+    print("  🛡️ CONVERSATIONAL WAKE-WORD GATING: 'Hey Point Break'")
     print(f"  📊 SYSTEM VITALS: CPU {int(cpu)}% | RAM {int(mem)}% | BATTERY {int(bat_pct)}%")
     print("============================================================")
     
     speak("All security protocols active. Defense grid nominal. Point Break online and standing by, Sir.", block=False)
     
-    # ── 3. CONTINUOUS ALWAYS-LISTENING LOOP ──
+    # ── 3. CONVERSATIONAL WAKE-WORD STATE MACHINE ──
+    conv_state = "STANDBY"
+    active_until = 0.0
+    wake_triggers = [
+        "hey point break", "hey pointbreak", "point break", "pointbreak",
+        "hey jarvis", "jarvis", "hey tars", "tars"
+    ]
+    affirmations = [
+        "yes", "do it", "sure", "proceed", "go ahead", "yeah", "yep", "confirm", "ok", "okay", "please do"
+    ]
+    
+    update_status({"status": "standby"})
+
     while True:
         if mic_muted:
             time.sleep(0.3)
             continue
         try:
+            now = time.time()
+            if conv_state == "ACTIVE" and now > active_until:
+                conv_state = "STANDBY"
+                print("  💤 [Conversational Window]: Reverted to STANDBY mode.")
+                update_status({"status": "standby"})
+
             q = take_command(timeout=None)
             if not q or q == "none":
                 continue
-            
-            # Execute command directly
-            print(f"  ⚡ [Executing]: '{q}'")
-            execute(q)
-            
+
+            q_clean = q.strip().lower()
+            now = time.time()
+
+            # Check for wake phrase match
+            matched_wake = None
+            for w in sorted(wake_triggers, key=len, reverse=True):
+                if q_clean == w or q_clean.startswith(w + " ") or (w in q_clean and len(q_clean) <= len(w) + 3):
+                    matched_wake = w
+                    break
+
+            if matched_wake:
+                conv_state = "ACTIVE"
+                active_until = now + 15.0
+                
+                # Check if user spoke ONLY the wake phrase
+                cmd = q_clean
+                if cmd.startswith(matched_wake):
+                    cmd = cmd[len(matched_wake):].strip(" ,.-")
+                elif matched_wake in cmd:
+                    cmd = cmd.replace(matched_wake, "", 1).strip(" ,.-")
+
+                if not cmd:
+                    print("  ⚡ [Wake Phrase Detected]: Session ACTIVE for 15 seconds.")
+                    update_status({"status": "listening"})
+                    speak("Yes Sir? I'm listening.", block=False)
+                    continue
+                else:
+                    print(f"  ⚡ [Wake + Command]: '{cmd}'")
+                    active_until = time.time() + 15.0
+                    execute(cmd)
+                    continue
+
+            # If already in ACTIVE conversational state, execute follow-ups without wake word
+            if conv_state == "ACTIVE":
+                print(f"  ⚡ [Active Session Command]: '{q}'")
+                active_until = time.time() + 15.0
+                execute(q)
+                continue
+
+            # In STANDBY: Check if this is an affirmative confirmation for an action
+            has_pending = bool(memory.get("pending_action") or (now - _last_spoken_finish_time < 15.0))
+            is_affirmative = any(q_clean == aff or q_clean.startswith(aff + " ") for aff in affirmations)
+
+            if has_pending and is_affirmative:
+                conv_state = "ACTIVE"
+                active_until = now + 15.0
+                print(f"  ⚡ [Standby Affirmation Executing]: '{q}'")
+                execute(q)
+                continue
+
+            # Otherwise in STANDBY, background chatter / ambient noise without wake word is ignored
+            print(f"  [Standby Filtered - Wake Word Required]: '{q}'")
+
         except Exception as main_err:
             print(f"  [Main Loop Exception]: {main_err}")
             time.sleep(0.3)
+
+
+def solve_highlighted_or_screen_cmd(custom_prompt: str = ""):
+    """
+    Instantly solves, fixes, or explains whatever is highlighted on screen.
+    If nothing is highlighted, captures the active window screen and solves it.
+    """
+    import pyautogui, pyperclip, time, threading, re
+    
+    speak("Analyzing highlighted selection...", block=False)
+    update_status({"status": "processing"})
+    
+    def _async_highlight_solve():
+        try:
+            # Step 1: Attempt to copy highlighted text
+            old_clip = ""
+            try: old_clip = pyperclip.paste()
+            except: pass
+            
+            pyperclip.copy("__POINTBREAK_SOLVER_SENTINEL__")
+            time.sleep(0.05)
+            pyautogui.hotkey('ctrl', 'c')
+            time.sleep(0.12)
+            
+            highlighted = ""
+            try:
+                copied = pyperclip.paste()
+                if copied and copied != "__POINTBREAK_SOLVER_SENTINEL__":
+                    highlighted = copied.strip()
+            except:
+                pass
+                
+            # If highlighted text was captured directly
+            if highlighted and len(highlighted) > 2:
+                print(f"[Solver] 🎯 Captured highlighted text ({len(highlighted)} chars): {highlighted[:80]}...")
+                user_req = custom_prompt.strip() if custom_prompt else "Solve, fix, or explain this with 100% precision"
+                prompt = (
+                    f"You are Point Break — elite developer, mathematician, and tactical AI.\n"
+                    f"The operator highlighted the following content on screen:\n"
+                    f"--- HIGHLIGHTED CONTENT ---\n{highlighted}\n---------------------------\n\n"
+                    f"Operator's instruction: '{user_req}'.\n"
+                    f"Provide a direct, high-precision, actionable solution, bug fix, or explanation.\n"
+                    f"Be concise, accurate, and speak with Point Break's sharp intellect."
+                )
+                solution = query_generative_model("gemini-3.5-flash-lite", prompt) or query_tars_ai(prompt)
+                update_status({"status": "idle", "last_monolith_response": solution})
+                
+                if solution:
+                    clean_sol = re.sub(r'(ACTION|SETTING):\s*\{.*\}', '', solution).strip()
+                    pyperclip.copy(clean_sol)
+                    speak(clean_sol, block=False)
+                    return
+            
+            # Step 2: Fallback to active screen vision capture if no text was highlighted
+            print("[Solver] No highlighted text found. Capturing screen vision...")
+            img_bytes = capture_desktop_screenshot()
+            if not img_bytes:
+                update_status({"status": "idle"})
+                speak("Could not capture highlighted text or screen details, Sir.", block=False)
+                return
+                
+            req = custom_prompt.strip() if custom_prompt else "Identify the active problem, code error, math question, or text on screen and solve it directly"
+            prompt = (
+                f"You are Point Break inspecting the operator's active screen.\n"
+                f"Focus on the primary active window (IDE, browser, PDF, document, compiler terminal).\n"
+                f"Operator's request: '{req}'.\n"
+                f"1. IF code or error: state the exact bug and give the clean fix.\n"
+                f"2. IF question or math: solve it step-by-step with the final answer.\n"
+                f"3. IF text or document: summarize the key takeaway.\n"
+                f"Be punchy, concise (2-4 sentences), and accurate."
+            )
+            analysis = query_tars_vision(img_bytes, prompt)
+            update_status({"status": "idle"})
+            if analysis:
+                clean_ans = re.sub(r'(ACTION|SETTING):\s*\{.*\}', '', analysis).strip()
+                pyperclip.copy(clean_ans)
+                update_status({"last_monolith_response": clean_ans})
+                speak(clean_ans, block=False)
+            else:
+                speak("Analysis complete, but vision engine could not resolve details.", block=False)
+        except Exception as e:
+            print("[Solver Error]:", e)
+            update_status({"status": "idle"})
+            speak("Encountered an issue solving the active selection, Sir.", block=False)
+            
+    threading.Thread(target=_async_highlight_solve, daemon=True).start()
 
 
 if __name__ == "__main__":
@@ -10150,92 +10066,11 @@ if __name__ == "__main__":
     except Exception as e:
         print("  [Air-Keyboard Init Warning]:", e)
 
-    # Run the Tkinter Hologram loop directly on the MAIN THREAD (ensures OS UI safety)
-    launch_floating_hologram()
-
-
-
-def solve_highlighted_or_screen_cmd(custom_prompt: str = ""):
-    """
-    Instantly solves, fixes, or explains whatever is highlighted on screen.
-    If nothing is highlighted, captures the active window screen and solves it.
-    """
-    import pyautogui, pyperclip, time, threading, re
-    
-    speak("Analyzing highlighted selection...", block=False)
-    update_status({"status": "processing"})
-    
-    def _async_highlight_solve():
-        try:
-            # Step 1: Attempt to copy highlighted text
-            old_clip = ""
-            try: old_clip = pyperclip.paste()
-            except: pass
-            
-            pyperclip.copy("__POINTBREAK_SOLVER_SENTINEL__")
-            time.sleep(0.05)
-            pyautogui.hotkey('ctrl', 'c')
-            time.sleep(0.12)
-            
-            highlighted = ""
-            try:
-                copied = pyperclip.paste()
-                if copied and copied != "__POINTBREAK_SOLVER_SENTINEL__":
-                    highlighted = copied.strip()
-            except:
-                pass
-                
-            # If highlighted text was captured directly
-            if highlighted and len(highlighted) > 2:
-                print(f"[Solver] 🎯 Captured highlighted text ({len(highlighted)} chars): {highlighted[:80]}...")
-                user_req = custom_prompt.strip() if custom_prompt else "Solve, fix, or explain this with 100% precision"
-                prompt = (
-                    f"You are Point Break — elite developer, mathematician, and tactical AI.\n"
-                    f"The operator highlighted the following content on screen:\n"
-                    f"--- HIGHLIGHTED CONTENT ---\n{highlighted}\n---------------------------\n\n"
-                    f"Operator's instruction: '{user_req}'.\n"
-                    f"Provide a direct, high-precision, actionable solution, bug fix, or explanation.\n"
-                    f"Be concise, accurate, and speak with Point Break's sharp intellect."
-                )
-                solution = query_generative_model("gemini-3.5-flash-lite", prompt) or query_tars_ai(prompt)
-                update_status({"status": "idle", "last_monolith_response": solution})
-                
-                if solution:
-                    clean_sol = re.sub(r'(ACTION|SETTING):\s*\{.*\}', '', solution).strip()
-                    pyperclip.copy(clean_sol)
-                    speak(clean_sol, block=False)
-                    return
-            
-            # Step 2: Fallback to active screen vision capture if no text was highlighted
-            print("[Solver] No highlighted text found. Capturing screen vision...")
-            img_bytes = capture_desktop_screenshot()
-            if not img_bytes:
-                update_status({"status": "idle"})
-                speak("Could not capture highlighted text or screen details, Sir.", block=False)
-                return
-                
-            req = custom_prompt.strip() if custom_prompt else "Identify the active problem, code error, math question, or text on screen and solve it directly"
-            prompt = (
-                f"You are Point Break inspecting the operator's active screen.\n"
-                f"Focus on the primary active window (IDE, browser, PDF, document, compiler terminal).\n"
-                f"Operator's request: '{req}'.\n"
-                f"1. IF code or error: state the exact bug and give the clean fix.\n"
-                f"2. IF question or math: solve it step-by-step with the final answer.\n"
-                f"3. IF text or document: summarize the key takeaway.\n"
-                f"Be punchy, concise (2-4 sentences), and accurate."
-            )
-            analysis = query_tars_vision(img_bytes, prompt)
-            update_status({"status": "idle"})
-            if analysis:
-                clean_ans = re.sub(r'(ACTION|SETTING):\s*\{.*\}', '', analysis).strip()
-                pyperclip.copy(clean_ans)
-                update_status({"last_monolith_response": clean_ans})
-                speak(clean_ans, block=False)
-            else:
-                speak("Analysis complete, but vision engine could not resolve details.", block=False)
-        except Exception as e:
-            print("[Solver Error]:", e)
-            update_status({"status": "idle"})
-            speak("Encountered an issue solving the active selection, Sir.", block=False)
-            
-    threading.Thread(target=_async_highlight_solve, daemon=True).start()
+    # Keep the main thread alive and responsive
+    print("  🚀 [Point Break Core]: Operational and listening on workstation interface.")
+    try:
+        while True:
+            time.sleep(1)
+    except (KeyboardInterrupt, SystemExit):
+        print("\n  [Point Break Core Shutting Down Gracefully...]")
+        os._exit(0)

@@ -79,7 +79,7 @@ Point Break 3.0 — Master Brain & Tri-Core Sub-Agent Swarm Engine (Default Edit
 1. Master Brain Router: 15ms intent triage with robust regex pattern matching.
 2. 🔴 ALPHA: Career, Writing & Knowledge (Job hunting, IMAP Email Triage, Ghostwriting, Dossiers, Vision).
 3. 🔴 BETA:  Commerce, Media & Communications (Amazon/Flipkart/Myntra Sniper, YouTube, WhatsApp, News, Food).
-4. 🔴 GAMMA: Tactical OS, Hardware, Sentry & Wireless ADB Phone Bridge.
+4. 🔴 GAMMA: Tactical OS, Hardware & Workstation Telemetry.
 5. Master Speech Priority Queue (Zero audio collisions, hardware-safe).
 6. Shared In-Memory Blackboard with 0ms real-time HUD telemetry push.
 """
@@ -491,11 +491,10 @@ class SubAgentBeta:
             speech_arbiter.speak("Transaction booking engine encountered an issue.", priority=2)
 
 
-# ── 5. SUB-AGENT GAMMA: TACTICAL OS, HARDWARE & SENTRY ──────────────
+# ── 5. SUB-AGENT GAMMA: TACTICAL OS, HARDWARE & WORKSTATION ──────────
 class SubAgentGamma:
-    """Handles File Hunter, Alarms/Clock, Workspace Cleaning, Hardware, Gestures, ADB."""
-    def __init__(self, enable_adb: bool = True):
-        self.enable_adb = enable_adb
+    """Handles File Hunter, Alarms/Clock, Workspace Cleaning, Hardware, Gestures."""
+    def __init__(self):
         self.task_queue = queue.Queue()
         self._thread = threading.Thread(target=self._worker_loop, daemon=True)
         self._thread.start()
@@ -514,37 +513,11 @@ class SubAgentGamma:
                     self.precision_file_hunter(q)
                 elif t_type == "organize_workspace":
                     self.organize_workspace(q)
-                elif t_type == "phone_lockdown" and self.enable_adb:
-                    self.lock_phone_remotely()
-                elif t_type == "phone_battery" and self.enable_adb:
-                    self.get_phone_battery()
-                elif t_type == "companion_display" and self.enable_adb:
-                    self.launch_companion_display()
-                elif t_type == "gods_eye":
-                    self.launch_gods_eye(q)
-                elif t_type == "cctv_matrix":
-                    self.show_cctv_matrix(q)
             except Exception as e:
                 print(f"[GAMMA Error] {t_type}: {e}")
             finally:
                 blackboard.update_agent("GAMMA", "IDLE")
                 self.task_queue.task_done()
-
-    def launch_gods_eye(self, query: str):
-        try:
-            from pointbreak_godseye import gods_eye_bridge
-            gods_eye_bridge.launch(query, speak_fn=lambda txt: speech_arbiter.speak(txt, priority=2))
-        except Exception as e:
-            print("[GAMMA God's Eye Error]:", e)
-            speech_arbiter.speak("Unable to launch God's Eye View satellite matrix.", priority=2)
-
-    def show_cctv_matrix(self, query: str):
-        try:
-            import pointbreak_cctv
-            pointbreak_cctv.cctv_engine.launch_cctv_recon(query, speak_fn=lambda txt: speech_arbiter.speak(txt, priority=2))
-        except Exception as e:
-            print("[GAMMA CCTV Error]:", e)
-            speech_arbiter.speak("Unable to access optical CCTV surveillance feeds.", priority=2)
 
     def precision_file_hunter(self, query: str):
         speech_arbiter.speak("Scanning local volumes for target file...", priority=2)
@@ -602,43 +575,11 @@ class SubAgentGamma:
             print("[GAMMA Clean] Error:", e)
             speech_arbiter.speak("Error organizing workspace files.", priority=2)
 
-    def lock_phone_remotely(self):
-        if not self.enable_adb: return
-        speech_arbiter.speak("Engaging wireless phone lockdown protocol...", priority=1)
-        try:
-            subprocess.run(['adb', 'shell', 'input', 'keyevent', '26'], capture_output=True, timeout=3, creationflags=subprocess.CREATE_NO_WINDOW if os.name=="nt" else 0)
-            subprocess.run(['adb', 'shell', 'cmd', 'audio', 'set-volume', '0', '0'], capture_output=True, timeout=3, creationflags=subprocess.CREATE_NO_WINDOW if os.name=="nt" else 0)
-            speech_arbiter.speak("Phone display locked and silenced remotely.", priority=1)
-        except Exception as e:
-            print("[GAMMA ADB] Error:", e)
-
-    def get_phone_battery(self):
-        if not self.enable_adb: return
-        try:
-            r = subprocess.run(['adb', 'shell', 'dumpsys', 'battery'], capture_output=True, text=True, timeout=3, creationflags=subprocess.CREATE_NO_WINDOW if os.name=="nt" else 0)
-            lvl = "Unknown"
-            for line in r.stdout.splitlines():
-                if 'level:' in line:
-                    lvl = line.split(':')[1].strip() + "%"
-            speech_arbiter.speak(f"Phone battery level is at {lvl}.", priority=2)
-        except Exception:
-            speech_arbiter.speak("Could not read phone battery level.", priority=2)
-
-    def launch_companion_display(self):
-        if not self.enable_adb: return
-        speech_arbiter.speak("Launching Cyber Sentinel companion display on your phone, Daksh.", priority=2)
-        try:
-            subprocess.run(['adb', 'reverse', 'tcp:8000', 'tcp:8000'], capture_output=True, timeout=3, creationflags=subprocess.CREATE_NO_WINDOW if os.name=="nt" else 0)
-            subprocess.run(['adb', 'shell', 'input', 'keyevent', '224'], capture_output=True, timeout=3, creationflags=subprocess.CREATE_NO_WINDOW if os.name=="nt" else 0)
-            subprocess.run(['adb', 'shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', 'http://localhost:8000/companion_display.html'], capture_output=True, timeout=5, creationflags=subprocess.CREATE_NO_WINDOW if os.name=="nt" else 0)
-        except Exception as e:
-            print("[GAMMA Companion] Launch error:", e)
-
 
 # Global instances
 agent_alpha = SubAgentAlpha()
 agent_beta = SubAgentBeta()
-agent_gamma = SubAgentGamma(enable_adb=True)
+agent_gamma = SubAgentGamma()
 
 
 # ── 6. MASTER BRAIN FAST ROUTER (< 15ms) ─────────────────────────────
@@ -851,36 +792,5 @@ def point_break_master_brain(query: str, speak_fn=None, update_status_fn=None, i
     if any(k in low for k in ["organize workspace", "clean downloads", "organize downloads", "sort downloads"]):
         agent_gamma.dispatch("organize_workspace", query)
         return True
-
-    # ── GAMMA: God's Eye View / Orbital Satellite Reconnaissance ──────
-    if any(k in low for k in [
-        "god's eye", "gods eye", "god eye", "godseye", "orbital reconnaissance", "satellite view",
-        "satellite recon", "track flights on globe", "open 3d globe", "tactical globe",
-        "orbital watch", "open satellite map", "global tracking"
-    ]) or re.search(r'\b(track|show|open)\b.*\b(satellite|globe|gods?\s*eye|orbit)\b', low):
-        agent_gamma.dispatch("gods_eye", query)
-        return True
-
-    # ── GAMMA: Global CCTV / Traffic Cameras Reconnaissance ──────────
-    if any(k in low for k in [
-        "cctv", "traffic cams", "traffic cameras", "traffic camera", "surveillance cams",
-        "webcams", "live cams", "street cameras", "highway cameras"
-    ]) or re.search(r'\b(show|open|view|watch|stream|feed)\b.*\b(cctv|traffic\s+cams?|traffic\s+cameras?|cameras?|webcams?)\b', low):
-        agent_gamma.dispatch("cctv_matrix", query)
-        return True
-
-    # ADB Phone commands (ONLY active if NOT commercial)
-    if not is_commercial:
-        if any(k in low for k in ["lock down my phone", "lockdown phone", "lock my phone", "silence phone"]):
-            agent_gamma.dispatch("phone_lockdown", query)
-            return True
-
-        if any(k in low for k in ["phone battery", "mobile battery", "check phone battery"]):
-            agent_gamma.dispatch("phone_battery", query)
-            return True
-
-        if any(k in low for k in ["launch companion display", "open companion display", "companion display", "eagle display"]):
-            agent_gamma.dispatch("companion_display", query)
-            return True
 
     return False
