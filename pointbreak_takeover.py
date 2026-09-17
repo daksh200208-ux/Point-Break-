@@ -59,12 +59,22 @@ except ImportError:
 
 try:
     import chess
-    from pointbreak_chess import chess_engine, chess_vision, execute_grandmaster_mouse_move
+    from pointbreak_chess import (
+        chess_engine,
+        reconstruct_board_state,
+        calculate_square_center,
+        execute_grandmaster_mouse_move,
+        load_chess_config,
+        save_chess_config
+    )
 except ImportError:
     chess = None
     chess_engine = None
-    chess_vision = None
+    reconstruct_board_state = None
+    calculate_square_center = None
     execute_grandmaster_mouse_move = None
+    load_chess_config = None
+    save_chess_config = None
 
 from dotenv import load_dotenv
 JARVIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -404,29 +414,23 @@ CRITICAL INSTRUCTIONS:
     ) -> bool:
         """
         Executes a precise physical move on Chess.com / Lichess:
-        Uses OpenCV calibrated square centers with hybrid drag-and-drop + click execution.
+        Uses hybrid drag-and-drop + click execution.
         """
-        bx1 = int(board_bbox_pct[0] * screen_w)
-        by1 = int(board_bbox_pct[1] * screen_h)
-        bx2 = int(board_bbox_pct[2] * screen_w)
-        by2 = int(board_bbox_pct[3] * screen_h)
-        board_bbox = (bx1, by1, bx2, by2)
-
         success = False
         if execute_grandmaster_mouse_move:
-            success = execute_grandmaster_mouse_move(board_bbox, from_sq, to_sq, player_color)
+            success = execute_grandmaster_mouse_move(board_bbox_pct, from_sq, to_sq, player_color, screen_w, screen_h)
         else:
             cx1, cy1 = self._calculate_square_center(board_bbox_pct, from_sq, player_color, screen_w, screen_h)
             cx2, cy2 = self._calculate_square_center(board_bbox_pct, to_sq, player_color, screen_w, screen_h)
-            pyautogui.moveTo(cx1, cy1, duration=0.12)
+            pyautogui.moveTo(cx1, cy1, duration=0.14)
             pyautogui.mouseDown(button='left')
             time.sleep(0.06)
-            pyautogui.moveTo(cx2, cy2, duration=0.18)
+            pyautogui.moveTo(cx2, cy2, duration=0.20)
             time.sleep(0.06)
             pyautogui.mouseUp(button='left')
             pyautogui.click(cx2, cy2)
             bx1 = int(board_bbox_pct[0] * screen_w)
-            pyautogui.moveTo(max(10, bx1 - 25), cy2, duration=0.08)
+            pyautogui.moveTo(max(10, bx1 - 40), cy2, duration=0.08)
             success = True
 
         if speak_fn:
@@ -440,48 +444,60 @@ CRITICAL INSTRUCTIONS:
 
     def suggest_best_chess_move(self, speak_fn: Optional[Callable[[str], None]] = None, update_status_fn: Optional[Callable[[Dict[str, Any]], None]] = None) -> bool:
         """
-        Analyzes the live chessboard on screen using Stockfish 16 + OpenCV
-        and speaks the best move recommendation aloud.
+        Analyzes the live chessboard on screen using Gemini Vision + Stockfish 16.
+        1. Reads move list or FEN from screen.
+        2. Auto-detects whether user is White or Black.
+        3. Stockfish evaluates the TRUE position and generates the winning move.
+        4. Executes or speaks the move.
         """
-        print("[Takeover Chess] Analyzing screen with Stockfish Grandmaster Engine...")
+        print("[Takeover Chess] Analyzing screen with Stockfish Grandmaster Matrix...")
         focus_chess_window()
         if speak_fn:
-            speak_fn("Analyzing chessboard position with Stockfish Grandmaster matrix, sir...")
+            speak_fn("Analyzing live chessboard with Stockfish Grandmaster matrix, sir...")
 
         shot, img_path = self.capture_screenshot()
         try:
             screen_w, screen_h = pyautogui.size()
-            board_bbox = None
-            if chess_vision and shot:
-                board_bbox = chess_vision.find_chessboard_on_screen(shot)
+            config = load_chess_config() if load_chess_config else {}
+            board_bbox_pct = config.get("board_bbox_pct", [0.18, 0.12, 0.55, 0.85])
+            player_color = config.get("player_color", "white")
 
-            if not board_bbox:
-                board_bbox = (int(screen_w * 0.18), int(screen_h * 0.12), int(screen_w * 0.55), int(screen_h * 0.85))
+            analysis_prompt = """Look at this screen (Chess.com / Lichess).
+Identify:
+1. "player_color": "white" or "black" (Look at the pieces on the bottom row closest to the user. Are they white or black?)
+2. "is_my_turn": true if our clock is running or it is our turn to move, false if waiting for opponent.
+3. "move_list": The move list text on screen (e.g. "1. e4 e5 2. Nf3 Nc6").
+4. "fen": FEN position if recognizable, or empty string.
+5. "board_bbox_pct": [left_pct, top_pct, right_pct, bottom_pct] exact board outer border (0.0 to 1.0).
 
-            board_bbox_pct = [
-                board_bbox[0] / screen_w,
-                board_bbox[1] / screen_h,
-                board_bbox[2] / screen_w,
-                board_bbox[3] / screen_h
-            ]
-
+Output ONLY JSON:
+{
+  "player_color": "white",
+  "is_my_turn": true,
+  "move_list": "1. e4 e5 2. Nf3 Nc6",
+  "fen": "",
+  "board_bbox_pct": [0.18, 0.12, 0.55, 0.85]
+}
+"""
+            res = self.query_vision(analysis_prompt, img_path, timeout=6.0) if img_path else None
             board = None
-            # If mid-game, ask Gemini to parse current FEN once, then feed to Stockfish
-            if img_path:
-                fen_prompt = """Look at the chessboard on screen.
-Output ONLY the valid FEN notation for the current board position.
-Example: rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1
-Output ONLY the FEN line."""
-                fen_res = self.query_vision(fen_prompt, img_path, timeout=5.0)
-                if fen_res:
-                    match = re.search(r'[rnbqkpRNBQKP1-8/]+\s+[wb]\s+[KQkq-]+\s+[a-h1-8-]+\s+\d+\s+\d+', fen_res)
-                    if match:
-                        try:
-                            b_candidate = chess.Board(match.group(0))
-                            if b_candidate.is_valid():
-                                board = b_candidate
-                        except Exception:
-                            pass
+            if res:
+                m = re.search(r'\{.*\}', res, re.DOTALL)
+                if m:
+                    try:
+                        data = json.loads(m.group(0))
+                        player_color = data.get("player_color", "white").lower()
+                        bbox_candidate = data.get("board_bbox_pct")
+                        if bbox_candidate and len(bbox_candidate) == 4:
+                            board_bbox_pct = bbox_candidate
+                            if save_chess_config:
+                                save_chess_config({"board_bbox_pct": board_bbox_pct, "player_color": player_color})
+
+                        if reconstruct_board_state:
+                            board, src = reconstruct_board_state(data.get("move_list"), data.get("fen"))
+                            print(f"[Takeover Chess Sync] Reconstructed board via {src} ({board.fen()})")
+                    except Exception as parse_err:
+                        print("[Takeover Chess Parse Warning]:", parse_err)
 
             if board is None:
                 board = chess.Board()
@@ -509,7 +525,7 @@ Output ONLY the FEN line."""
                     board_bbox_pct=board_bbox_pct,
                     from_sq=from_sq,
                     to_sq=to_sq,
-                    player_color="white" if board.turn == chess.WHITE else "black",
+                    player_color=player_color,
                     screen_w=screen_w,
                     screen_h=screen_h,
                     speak_fn=None,
@@ -528,12 +544,12 @@ Output ONLY the FEN line."""
 
     def take_over_chess_game(self, single_move: bool = False, speak_fn: Optional[Callable[[str], None]] = None, update_status_fn: Optional[Callable[[Dict[str, Any]], None]] = None) -> bool:
         """
-        Autonomous Grandmaster Chess Takeover (Stockfish 16 + OpenCV):
-        - Sub-pixel board detection via OpenCV.
-        - Deep Stockfish 16 analysis (depth 18+, 3500+ ELO).
-        - 100% legal moves verified against FIDE rules.
-        - Real-time opponent move detection via pixel diff and highlight tracking.
-        - Smooth physical drag-and-drop piece movement.
+        Autonomous Grandmaster Chess Takeover (Stockfish 16 + Full Board Sync):
+        - Syncs board state from screen on EVERY turn (reads move list / FEN).
+        - Auto-detects White vs Black player color.
+        - Identifies opponent threats (prevents 5-move checkmates!).
+        - Deep Stockfish 16 calculation (3500+ ELO).
+        - Smooth physical drag-and-drop piece mover.
         """
         with self._lock:
             self.is_active = True
@@ -548,89 +564,128 @@ Output ONLY the FEN line."""
         def _chess_loop():
             focus_chess_window()
             moves_made = 0
-            board = chess.Board()
-            player_color = "white"
+            last_executed_move = None
+            consecutive_waits = 0
 
-            screen_w, screen_h = pyautogui.size()
-            shot, _ = self.capture_screenshot()
-            board_bbox = None
-            if shot and chess_vision:
-                board_bbox = chess_vision.find_chessboard_on_screen(shot)
-                chess_vision.save_board_snapshot(shot, board_bbox)
+            config = load_chess_config() if load_chess_config else {}
+            board_bbox_pct = config.get("board_bbox_pct", [0.18, 0.12, 0.55, 0.85])
+            player_color = config.get("player_color", "white")
 
-            if not board_bbox:
-                board_bbox = (int(screen_w * 0.18), int(screen_h * 0.12), int(screen_w * 0.55), int(screen_h * 0.85))
+            analysis_prompt = """Look at this screen (Chess.com / Lichess).
+Identify:
+1. "player_color": "white" or "black" (look at the pieces on the bottom row closest to user).
+2. "is_my_turn": true if our clock is active or it is our turn to move, false if opponent's turn.
+3. "move_list": The move list text on screen (e.g. "1. e4 e5 2. Nf3 Nc6").
+4. "fen": FEN notation if recognizable, or empty string.
+5. "board_bbox_pct": [left_pct, top_pct, right_pct, bottom_pct] outer board boundary (0.0 to 1.0).
 
-            board_bbox_pct = [
-                board_bbox[0] / screen_w,
-                board_bbox[1] / screen_h,
-                board_bbox[2] / screen_w,
-                board_bbox[3] / screen_h
-            ]
-
+Output ONLY JSON:
+{
+  "player_color": "white",
+  "is_my_turn": true,
+  "move_list": "1. e4 e5 2. Nf3 Nc6",
+  "fen": "",
+  "board_bbox_pct": [0.18, 0.12, 0.55, 0.85]
+}
+"""
             while not self.stop_requested:
                 if update_status_fn:
-                    update_status_fn({"takeover": "chess", "status": "evaluating_board", "moves_made": moves_made})
+                    update_status_fn({"takeover": "chess", "status": "analyzing_screen", "moves_made": moves_made})
 
-                if board.is_game_over():
-                    outcome = board.outcome()
-                    msg = "Checkmate, sir. Victory confirmed." if (outcome and outcome.winner == chess.WHITE and player_color == "white") else "Game concluded, sir."
-                    if speak_fn: speak_fn(msg)
-                    break
+                _, img_path = self.capture_screenshot()
+                screen_w, screen_h = pyautogui.size()
 
-                # 1. OUR TURN: Stockfish evaluation and move execution
-                is_our_turn = (board.turn == chess.WHITE and player_color == "white") or (board.turn == chess.BLACK and player_color == "black")
-                if is_our_turn:
+                try:
+                    res = self.query_vision(analysis_prompt, img_path, timeout=6.0) if img_path else None
+                    if not res:
+                        time.sleep(1.0)
+                        continue
+
+                    m = re.search(r'\{.*\}', res, re.DOTALL)
+                    if not m:
+                        time.sleep(1.0)
+                        continue
+
+                    data = json.loads(m.group(0))
+                    player_color = data.get("player_color", player_color).lower()
+                    is_my_turn = data.get("is_my_turn", True)
+
+                    bbox_cand = data.get("board_bbox_pct")
+                    if bbox_cand and len(bbox_cand) == 4:
+                        board_bbox_pct = bbox_cand
+                        if save_chess_config:
+                            save_chess_config({"board_bbox_pct": board_bbox_pct, "player_color": player_color})
+
+                    # Reconstruct live board state from move history or FEN
+                    board, src = reconstruct_board_state(data.get("move_list"), data.get("fen")) if reconstruct_board_state else (chess.Board(), "start")
+
+                    # Check game conclusion
+                    if board.is_game_over():
+                        outcome = board.outcome()
+                        msg = "Checkmate, sir. Game concluded." if outcome and outcome.winner is not None else "Game drawn, sir."
+                        if speak_fn: speak_fn(msg)
+                        break
+
+                    # Check if it is our turn
+                    # In chess, White moves on turn WHITE, Black moves on turn BLACK
+                    expected_turn = chess.WHITE if player_color == "white" else chess.BLACK
+                    turn_matches = (board.turn == expected_turn)
+
+                    if not is_my_turn or not turn_matches:
+                        consecutive_waits += 1
+                        if consecutive_waits == 1:
+                            print(f"[Takeover Chess] ⏳ Waiting for opponent ({'Black' if player_color == 'white' else 'White'}) to move...")
+                        time.sleep(1.0)
+                        continue
+
+                    consecutive_waits = 0
+
+                    # OUR TURN: Calculate best Grandmaster move with Stockfish
+                    print(f"[Takeover Chess] 🧠 Stockfish analyzing position for {player_color.upper()}...")
                     engine_res = chess_engine.query_best_move(board, time_limit=0.35) if chess_engine else None
-                    if engine_res and engine_res.get("success"):
-                        best_m = engine_res.get("move")
-                        from_sq = engine_res.get("from_sq")
-                        to_sq = engine_res.get("to_sq")
-                        piece_name = engine_res.get("piece_name", "Piece")
-                        reason = engine_res.get("tactical_reason", "")
+                    if not engine_res or not engine_res.get("success"):
+                        time.sleep(1.0)
+                        continue
 
-                        self.execute_chess_move_on_board(
-                            board_bbox_pct=board_bbox_pct,
-                            from_sq=from_sq,
-                            to_sq=to_sq,
-                            player_color=player_color,
-                            screen_w=screen_w,
-                            screen_h=screen_h,
-                            speak_fn=speak_fn,
-                            reason=reason,
-                            piece_name=piece_name
-                        )
+                    from_sq = engine_res.get("from_sq")
+                    to_sq = engine_res.get("to_sq")
+                    piece_name = engine_res.get("piece_name", "Piece")
+                    reason = engine_res.get("tactical_reason", "")
+                    move_key = f"{from_sq}_{to_sq}"
 
-                        board.push(best_m)
-                        moves_made += 1
+                    if move_key == last_executed_move:
+                        # Move was just dispatched, wait for board to reflect
+                        time.sleep(1.0)
+                        continue
 
-                        time.sleep(0.3)
-                        post_shot, _ = self.capture_screenshot()
-                        if post_shot and chess_vision:
-                            chess_vision.save_board_snapshot(post_shot, board_bbox)
+                    # Execute the physical move
+                    self.execute_chess_move_on_board(
+                        board_bbox_pct=board_bbox_pct,
+                        from_sq=from_sq,
+                        to_sq=to_sq,
+                        player_color=player_color,
+                        screen_w=screen_w,
+                        screen_h=screen_h,
+                        speak_fn=speak_fn,
+                        reason=reason,
+                        piece_name=piece_name
+                    )
 
-                        if single_move:
-                            break
+                    last_executed_move = move_key
+                    moves_made += 1
 
-                # 2. OPPONENT'S TURN: Real-time OpenCV diff detection
-                print("[Takeover Chess] Waiting for opponent to play their move...")
-                opponent_moved = False
-                wait_start = time.time()
+                    if single_move:
+                        break
 
-                while not self.stop_requested and not opponent_moved and (time.time() - wait_start < 120.0):
-                    time.sleep(0.5)
-                    curr_shot, _ = self.capture_screenshot()
-                    if curr_shot and chess_vision:
-                        opp_move = chess_vision.detect_opponent_move_via_diff(curr_shot, board, board_bbox, player_color)
-                        if opp_move and opp_move in board.legal_moves:
-                            print(f"[Takeover Chess] Opponent played: {opp_move.uci()}")
-                            board.push(opp_move)
-                            opponent_moved = True
-                            time.sleep(0.2)
-                            break
+                    time.sleep(2.0)
 
-                if not opponent_moved and not single_move:
-                    break
+                except Exception as e:
+                    print(f"[Takeover Chess Loop Error]: {e}")
+                    time.sleep(1.2)
+                finally:
+                    if img_path and os.path.exists(img_path):
+                        try: os.remove(img_path)
+                        except Exception: pass
 
             with self._lock:
                 self.is_active = False
