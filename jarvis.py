@@ -3298,24 +3298,17 @@ def create_startup_shortcut():
     except Exception as e:
         print("[Startup] Registry run key setup error:", e)
 
-    # 3. Create verified shortcut in Windows shell:startup folder
+    # 3. Clean up stale shell:startup shortcut (only Registry Run key is used now)
+    # Having both Registry Run AND Startup folder causes Windows to launch TWO instances
     try:
         startup_dir = os.path.join(os.environ.get("APPDATA", ""), "Microsoft\\Windows\\Start Menu\\Programs\\Startup")
         if startup_dir and os.path.exists(startup_dir):
             lnk_path = os.path.join(startup_dir, "Point_Break.lnk")
-            ps_lnk = f'''
-            $ws = New-Object -ComObject WScript.Shell
-            $s = $ws.CreateShortcut('{lnk_path}')
-            $s.TargetPath = 'wscript.exe'
-            $s.Arguments = '"{vbs_path}"'
-            $s.WorkingDirectory = '{JARVIS_DIR}'
-            $s.Description = 'Point Break Autonomous Assistant'
-            $s.Save()
-            '''
-            subprocess.run(["powershell", "-Command", ps_lnk], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            log_startup_event(f"Created shell:startup shortcut: {lnk_path}")
+            if os.path.exists(lnk_path):
+                os.remove(lnk_path)
+                print("[Startup] Removed stale duplicate startup shortcut to prevent double-launch.")
     except Exception as e:
-        print("[Startup] Startup folder shortcut setup error:", e)
+        print("[Startup] Startup folder cleanup warning:", e)
 
 def proactive_monitor():
     import shutil, socket
@@ -9956,8 +9949,8 @@ if __name__ == "__main__":
     except:
         pass
 
-    # Create invisible Windows background startup shortcuts
-    create_startup_shortcut()
+    # Create invisible Windows background startup shortcuts (non-blocking)
+    threading.Thread(target=create_startup_shortcut, daemon=True).start()
 
     # Self-destruct old data (12 hours rule)
     purge_expired_data()
@@ -9966,14 +9959,6 @@ if __name__ == "__main__":
     server_thread = threading.Thread(target=start_tars_server, daemon=True)
     server_thread.start()
     
-    # Wait until ACTIVE_PORT is bound (up to 3 seconds)
-    start_wait = time.time()
-    while ACTIVE_PORT == 0 and time.time() - start_wait < 3.0:
-        if not server_thread.is_alive():
-            break
-        time.sleep(0.1)
-        
-    final_port = ACTIVE_PORT if ACTIVE_PORT != 0 else 8000
 
     # AUTOMATICALLY OPEN LOCALHOST HUD IN BROWSER ONCE
     _hud_opened_flag = False
@@ -9983,11 +9968,17 @@ if __name__ == "__main__":
             return
         _hud_opened_flag = True
         
+        # Wait until ACTIVE_PORT is actually bound (up to 10 seconds for slow boots)
+        t0 = time.time()
+        while ACTIVE_PORT == 0 and time.time() - t0 < 10.0:
+            time.sleep(0.3)
+        port = ACTIVE_PORT if ACTIVE_PORT != 0 else 8000
+        
         # Extra settling window on reboot for default browser ready state
-        extra_delay = 3.0 if IS_STARTUP_MODE else 1.0
+        extra_delay = 5.0 if IS_STARTUP_MODE else 1.5
         time.sleep(extra_delay)
         
-        hud_url = f"http://127.0.0.1:{final_port}/jarvis_hud.html"
+        hud_url = f"http://127.0.0.1:{port}/jarvis_hud.html"
         print(f"  [Launching Point Break Localhost HUD in Browser: {hud_url}]")
         log_startup_event(f"Opening Browser HUD at {hud_url}")
         
@@ -10002,11 +9993,11 @@ if __name__ == "__main__":
                 log_startup_event(f"webbrowser.open attempt {attempt+1} warning: {e}")
             time.sleep(1.5)
             
-        # Resilient Windows Shell fallback to guarantee the browser window launches
-        if os.name == "nt":
+        # Resilient Windows Shell fallback ONLY if webbrowser.open failed
+        if not opened and os.name == "nt":
             try:
                 subprocess.Popen(f'cmd /c start "" "{hud_url}"', shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                log_startup_event("Windows shell HUD open command dispatched.")
+                log_startup_event("Windows shell HUD fallback dispatched (webbrowser.open failed).")
             except Exception as e:
                 log_startup_event(f"Windows shell HUD fallback error: {e}")
 
@@ -10066,11 +10057,20 @@ if __name__ == "__main__":
     except Exception as e:
         print("  [Air-Keyboard Init Warning]:", e)
 
-    # Keep the main thread alive and responsive
+    # Launch the Floating Holographic Orb on the main thread (Tkinter requires main thread)
+    # This is the orange pulsing arc-reactor widget that sits on top of the desktop
     print("  🚀 [Point Break Core]: Operational and listening on workstation interface.")
     try:
-        while True:
-            time.sleep(1)
+        print("  🔶 [Launching Floating Holographic Orb on desktop...]")
+        launch_floating_hologram()
     except (KeyboardInterrupt, SystemExit):
         print("\n  [Point Break Core Shutting Down Gracefully...]")
         os._exit(0)
+    except Exception as e:
+        print(f"  [Hologram Orb Warning]: {e} — falling back to headless keepalive mode.")
+        try:
+            while True:
+                time.sleep(1)
+        except (KeyboardInterrupt, SystemExit):
+            print("\n  [Point Break Core Shutting Down Gracefully...]")
+            os._exit(0)
