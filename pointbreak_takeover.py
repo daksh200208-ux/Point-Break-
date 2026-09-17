@@ -67,7 +67,8 @@ try:
         execute_rapid_mouse_move,
         get_square_center,
         load_chess_config,
-        save_chess_config
+        save_chess_config,
+        run_autonomous_chess_game
     )
 except ImportError:
     chess = None
@@ -79,6 +80,7 @@ except ImportError:
     get_square_center = None
     load_chess_config = None
     save_chess_config = None
+    run_autonomous_chess_game = None
 
 from dotenv import load_dotenv
 JARVIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -458,8 +460,8 @@ CRITICAL INSTRUCTIONS:
         """
         High-Speed Silent Grandmaster Chess Takeover (Stockfish 16 NNUE):
         - Completely silent: zero voice interruptions during play.
-        - Moves within 2.0 to 3.5 seconds after opponent moves.
-        - Ultra-fast 5ms local move detection via yellow/green highlights.
+        - Moves within 3.0 to 3.8 seconds after opponent moves.
+        - Robust multi-theme board & highlight vision (Chess.com / Lichess).
         - True 3500+ ELO Stockfish 16 engine: zero blunders, zero dumb moves.
         """
         with self._lock:
@@ -468,81 +470,19 @@ CRITICAL INSTRUCTIONS:
             self.stop_requested = False
 
         print("[Takeover] ♟️ Engaging High-Speed Silent Stockfish Grandmaster...")
-        if speak_fn:
-            speak_fn("Grandmaster matrix armed.")
 
         def _chess_loop():
-            focus_chess_window()
-            time.sleep(0.3)
-
-            shot, _ = self.capture_screenshot()
-            screen_w, screen_h = pyautogui.size()
-            board_bbox = detect_chessboard_bounds(shot) if (shot and detect_chessboard_bounds) else (250, 140, 1030, 920)
-            player_color = detect_player_color_from_board(shot, board_bbox) if (shot and detect_player_color_from_board) else "white"
-
-            print(f"[Point Break Chess] Armed on board {board_bbox} playing as {player_color.upper()}")
-
-            board = chess.Board()
-            moves_made = 0
-
-            # IF WE ARE WHITE: Play our opening move within 1 second!
-            if player_color == "white":
-                time.sleep(0.4)
-                res = chess_engine.query_best_move(board, time_limit=0.20) if chess_engine else None
-                if res and res.get("success"):
-                    execute_rapid_mouse_move(board_bbox, res["from_sq"], res["to_sq"], "white")
-                    board.push(res["move"])
-                    moves_made += 1
-                    print(f"[Point Break Chess] Opening move played: {res['uci']}")
-                    if single_move:
-                        with self._lock: self.is_active = False; self.current_mode = "idle"
-                        return
-
-            # GAME LOOP: Rapid 250ms polling for opponent moves
-            print("[Point Break Chess] Watching board for opponent moves...")
-            last_check_time = time.time()
-
-            while not self.stop_requested:
-                if board.is_game_over():
-                    outcome = board.outcome()
-                    print(f"[Point Break Chess] Game finished: {outcome}")
-                    if speak_fn:
-                        speak_fn("Game concluded.")
-                    break
-
-                # Sample screen for opponent move (yellow/green highlight check)
-                curr_shot, _ = self.capture_screenshot()
-                if curr_shot and detect_opponent_move_fast:
-                    opp_move = detect_opponent_move_fast(curr_shot, board, board_bbox, player_color)
-                    if opp_move and opp_move in board.legal_moves:
-                        print(f"[Point Break Chess] ⚡ Opponent played: {opp_move.uci()}")
-                        board.push(opp_move)
-
-                        if board.is_game_over():
-                            break
-
-                        # Human-like delay: wait 1.2 to 1.8 seconds (total move time: ~2.5s)
-                        time.sleep(1.2)
-
-                        # Calculate Grandmaster response with Stockfish 16 (0.2s)
-                        res = chess_engine.query_best_move(board, time_limit=0.22) if chess_engine else None
-                        if res and res.get("success"):
-                            my_move = res["move"]
-                            execute_rapid_mouse_move(board_bbox, res["from_sq"], res["to_sq"], player_color)
-                            board.push(my_move)
-                            moves_made += 1
-                            print(f"[Point Break Chess] 🎯 Counter-attack: {my_move.uci()} (Stockfish evaluation: {res.get('score', 0):+.2f})")
-
-                        if single_move:
-                            break
-
-                        time.sleep(0.5)
-
-                time.sleep(0.25)
-
-            with self._lock:
-                self.is_active = False
-                self.current_mode = "idle"
+            try:
+                if run_autonomous_chess_game:
+                    run_autonomous_chess_game(time_delay_target=3.2, single_move=single_move)
+                else:
+                    print("[Takeover Chess Error]: run_autonomous_chess_game is unavailable.")
+            except Exception as e:
+                print(f"[Takeover Chess Loop Error]: {e}")
+            finally:
+                with self._lock:
+                    self.is_active = False
+                    self.current_mode = "idle"
 
         t = threading.Thread(target=_chess_loop, daemon=True)
         self.active_thread = t
