@@ -46,6 +46,7 @@ CHESS_DIR = os.path.dirname(os.path.abspath(__file__))
 BIN_DIR = os.path.join(CHESS_DIR, "bin")
 STOCKFISH_EXE = os.path.join(BIN_DIR, "stockfish.exe")
 CONFIG_FILE = os.path.join(CHESS_DIR, "chess_config.json")
+STOP_FLAG_FILE = os.path.join(CHESS_DIR, "chess_stop.flag")
 
 # Standard 1080p maximized browser on Chess.com:
 DEFAULT_BOARD_BBOX = (315, 175, 1095, 955)
@@ -101,44 +102,120 @@ def capture_desktop_screenshot() -> Optional[Image.Image]:
     return None
 
 
+def is_terminal_or_python_hwnd(hwnd: int) -> bool:
+    """Returns True if hwnd belongs to a console, terminal, cmd, powershell, or python process."""
+    try:
+        import win32gui
+        import win32process
+        import psutil
+        cls_name = (win32gui.GetClassName(hwnd) or "").lower()
+        if any(c in cls_name for c in ["consolewindowclass", "cascadia_hosting_window_class", "virtualconsoleclass"]):
+            return True
+        title = (win32gui.GetWindowText(hwnd) or "").lower()
+        if any(bad in title for bad in [
+            "cmd.exe", "command prompt", "powershell", "point break",
+            "terminal", "python", "stockfish", "c:\\windows\\system32"
+        ]):
+            return True
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        pname = psutil.Process(pid).name().lower()
+        if any(bad in pname for bad in [
+            "cmd.exe", "powershell.exe", "openconsole.exe",
+            "windowsterminal.exe", "conhost.exe", "python.exe", "pythonw.exe"
+        ]):
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def focus_chess_window() -> bool:
-    """Brings Chess window (Chrome, Edge, Firefox, Brave) to foreground smoothly."""
+    """
+    Finds and brings the actual web browser (Chrome, Edge, Firefox, Brave)
+    running Chess.com or Lichess to the foreground and MAXIMIZES it.
+    Strictly filters out and minimizes any console or terminal window.
+    """
     try:
         import win32gui
         import win32process
         import win32api
+        import win32con
+        import win32console
         import ctypes
+        import psutil
 
+        # 1. Immediately drop own console window to taskbar so it NEVER blocks the chessboard
+        try:
+            c_hwnd = win32console.GetConsoleWindow()
+            if c_hwnd:
+                win32gui.ShowWindow(c_hwnd, win32con.SW_MINIMIZE)
+        except Exception:
+            pass
+
+        # 2. Check if current active window is ALREADY a valid chess browser
         cur_hwnd = win32gui.GetForegroundWindow()
-        cur_title = (win32gui.GetWindowText(cur_hwnd) or "").lower()
-        if any(k in cur_title for k in ["chess", "lichess"]):
-            return True
+        if cur_hwnd and not is_terminal_or_python_hwnd(cur_hwnd):
+            cur_title = (win32gui.GetWindowText(cur_hwnd) or "").lower()
+            if any(k in cur_title for k in ["chess.com", "lichess", "chess"]):
+                try:
+                    _, pid = win32process.GetWindowThreadProcessId(cur_hwnd)
+                    pname = psutil.Process(pid).name().lower()
+                    if any(b in pname for b in ["chrome", "msedge", "firefox", "brave", "opera", "vivaldi"]):
+                        win32gui.ShowWindow(cur_hwnd, win32con.SW_MAXIMIZE)
+                        return True
+                except Exception:
+                    pass
 
-        matches = []
-        def enum_cb(hwnd, results):
-            if win32gui.IsWindowVisible(hwnd):
-                title = (win32gui.GetWindowText(hwnd) or "").lower()
-                if any(k in title for k in ["chess", "lichess"]):
-                    results.append((hwnd, title))
-            return True
+        # 3. Search all visible top-level windows for Chess in a browser
+        browser_matches = []
+        fallback_matches = []
 
-        win32gui.EnumWindows(enum_cb, matches)
-        if matches:
-            hwnd = matches[0][0]
-            if win32gui.IsIconic(hwnd):
-                win32gui.ShowWindow(hwnd, 9)  # SW_RESTORE
+        def enum_cb(hwnd, extra):
+            if not win32gui.IsWindowVisible(hwnd):
+                return True
+            if is_terminal_or_python_hwnd(hwnd):
+                return True
+            title = (win32gui.GetWindowText(hwnd) or "").lower()
+            if not any(k in title for k in ["chess.com", "lichess", "chess"]):
+                return True
             try:
-                fg_thread = win32process.GetWindowThreadProcessId(win32gui.GetForegroundWindow())[0]
-                cur_thread = win32api.GetCurrentThreadId()
-                win32process.AttachThreadInput(cur_thread, fg_thread, True)
-                win32gui.SetForegroundWindow(hwnd)
-                win32process.AttachThreadInput(cur_thread, fg_thread, False)
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                pname = psutil.Process(pid).name().lower()
+                if any(b in pname for b in ["chrome", "msedge", "firefox", "brave", "opera", "vivaldi"]):
+                    browser_matches.append((hwnd, title, pname))
+                else:
+                    fallback_matches.append((hwnd, title, pname))
             except Exception:
-                ctypes.windll.user32.SetForegroundWindow(hwnd)
-            time.sleep(0.15)
+                fallback_matches.append((hwnd, title, "unknown"))
             return True
-    except Exception:
-        pass
+
+        win32gui.EnumWindows(enum_cb, None)
+        targets = browser_matches or fallback_matches
+
+        if targets:
+            target_hwnd = targets[0][0]
+            # Restore if minimized, then MAXIMIZE so the chessboard is full-screen
+            if win32gui.IsIconic(target_hwnd):
+                win32gui.ShowWindow(target_hwnd, win32con.SW_RESTORE)
+            win32gui.ShowWindow(target_hwnd, win32con.SW_MAXIMIZE)
+
+            # Bring to foreground with thread input attachment
+            try:
+                fg_hwnd = win32gui.GetForegroundWindow()
+                fg_thread = win32process.GetWindowThreadProcessId(fg_hwnd)[0] if fg_hwnd else 0
+                cur_thread = win32api.GetCurrentThreadId()
+                if fg_thread and fg_thread != cur_thread:
+                    win32process.AttachThreadInput(cur_thread, fg_thread, True)
+                win32gui.SetForegroundWindow(target_hwnd)
+                if fg_thread and fg_thread != cur_thread:
+                    win32process.AttachThreadInput(cur_thread, fg_thread, False)
+            except Exception:
+                ctypes.windll.user32.SetForegroundWindow(target_hwnd)
+
+            time.sleep(0.25)
+            return True
+    except Exception as e:
+        print(f"[Focus Chess Error]: {e}")
     return False
 
 
@@ -516,12 +593,13 @@ def execute_rapid_mouse_move(
     player_color: str = "white"
 ) -> bool:
     """
-    Executes physical piece move on screen:
-    1. Click and hold on from_sq (80ms hold ensures Chromium event registration)
-    2. Smooth drag to to_sq
-    3. Click-to-move tap
-    4. Auto-confirms queen promotion
-    5. Parks cursor off-board
+    Executes physical piece move on screen using ultra-reliable two-click method:
+    1. Click source square (selects piece, shows legal destinations on Chess.com / Lichess).
+    2. Wait 60ms for DOM event registration.
+    3. Click destination square (completes move).
+    4. Auto-promotes to Queen if pawn reaches 8th/1st rank.
+    5. Parks mouse off-board so cursor never obscures highlight detection.
+    Zero phantom drag-clicks: never leaves pieces inadvertently re-selected!
     """
     cx1, cy1 = get_square_center(board_bbox, from_sq, player_color)
     cx2, cy2 = get_square_center(board_bbox, to_sq, player_color)
@@ -532,30 +610,24 @@ def execute_rapid_mouse_move(
     if not (0 <= cx2 < screen_w and 0 <= cy2 < screen_h - 20):
         return False
 
-    # 1. Select piece with 60ms hold
-    pyautogui.moveTo(cx1, cy1, duration=0.08)
-    pyautogui.mouseDown(cx1, cy1, button='left')
+    # 1. Click source square to select piece
+    pyautogui.moveTo(cx1, cy1, duration=0.06)
+    pyautogui.click(cx1, cy1)
     time.sleep(0.06)
 
-    # 2. Smooth drag to destination
-    pyautogui.moveTo(cx2, cy2, duration=0.14)
-    time.sleep(0.04)
-    pyautogui.mouseUp(cx2, cy2, button='left')
-    time.sleep(0.03)
+    # 2. Click destination square to complete move
+    pyautogui.moveTo(cx2, cy2, duration=0.07)
+    pyautogui.click(cx2, cy2)
+    time.sleep(0.06)
 
-    # 3. Click-to-move tap to confirm placement
-    pyautogui.mouseDown(cx2, cy2, button='left')
-    time.sleep(0.05)
-    pyautogui.mouseUp(cx2, cy2, button='left')
-
-    # 4. Handle Promotion Modal (tapping confirms Queen)
+    # 3. Handle Queen promotion modal if promoting pawn
     if to_sq[1] in ('1', '8'):
-        time.sleep(0.08)
+        time.sleep(0.10)
         pyautogui.click(cx2, cy2)
 
-    # 5. Park mouse off-board so cursor doesn't cover highlights
+    # 4. Park mouse off-board so cursor never hovers over board squares
     bx1 = board_bbox[0]
-    park_x = max(15, bx1 - 50)
+    park_x = max(15, bx1 - 60)
     pyautogui.moveTo(park_x, cy2, duration=0.05)
     return True
 
@@ -590,12 +662,23 @@ def format_board_ascii(board: chess.Board, player_color: str = "white") -> str:
 
 
 # Global stop request signal for external controllers (Voice, HUD, Hotkeys)
+# Global stop request signal for external controllers (Voice, HUD, Hotkeys, Signal File)
 _CHESS_STOP_REQUESTED = False
 
 def request_chess_stop():
-    """Signals autonomous chess loop to gracefully terminate immediately."""
+    """Signals autonomous chess loop to gracefully terminate immediately across all processes."""
     global _CHESS_STOP_REQUESTED
     _CHESS_STOP_REQUESTED = True
+    try:
+        with open(STOP_FLAG_FILE, "w", encoding="utf-8") as f:
+            f.write(str(time.time()))
+    except Exception:
+        pass
+    try:
+        import subprocess
+        subprocess.run(["taskkill", "/F", "/IM", "stockfish.exe"], capture_output=True)
+    except Exception:
+        pass
     print("\n[Chess Titan] Stop signal received. Terminating autonomous chess engine...")
 
 
@@ -612,13 +695,39 @@ def run_autonomous_chess_game(
     - Stockfish 16 NNUE (3500+ ELO).
     - Visual terminal HUD with live board updates and cursor verification.
     - Responsive operator disengage / stop polling (< 50ms).
+    - Immediate console minimization: zero giant black CMD windows covering the board!
     """
     global _CHESS_STOP_REQUESTED
     _CHESS_STOP_REQUESTED = False
 
+    # Clean old stop flag on fresh start
+    try:
+        if os.path.exists(STOP_FLAG_FILE):
+            os.remove(STOP_FLAG_FILE)
+    except Exception:
+        pass
+
+    # Immediately minimize own console window to taskbar
+    try:
+        import win32console, win32gui, win32con
+        c_hwnd = win32console.GetConsoleWindow()
+        if c_hwnd:
+            win32gui.ShowWindow(c_hwnd, win32con.SW_MINIMIZE)
+    except Exception:
+        pass
+
     def check_stop() -> bool:
         if _CHESS_STOP_REQUESTED:
             return True
+        if os.path.exists(STOP_FLAG_FILE):
+            return True
+        try:
+            import win32api, win32con
+            if win32api.GetAsyncKeyState(win32con.VK_ESCAPE) & 0x8000:
+                request_chess_stop()
+                return True
+        except Exception:
+            pass
         if is_stop_requested and callable(is_stop_requested):
             try:
                 return bool(is_stop_requested())

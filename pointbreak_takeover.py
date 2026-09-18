@@ -74,7 +74,8 @@ try:
         load_chess_config,
         save_chess_config,
         run_autonomous_chess_game,
-        request_chess_stop
+        request_chess_stop,
+        focus_chess_window
     )
 except ImportError:
     chess = None
@@ -88,6 +89,7 @@ except ImportError:
     save_chess_config = None
     run_autonomous_chess_game = None
     request_chess_stop = None
+    focus_chess_window = None
 
 from dotenv import load_dotenv
 JARVIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -107,44 +109,13 @@ TAKEOVER_MODELS = [
     "gemini-3.6-flash"
 ]
 
-def focus_chess_window() -> bool:
-    """Brings Chess window to foreground smoothly without destructive maximize/restore flicker."""
-    if not win32gui:
-        return False
+# Ensure focus_chess_window uses the robust browser-maximizing implementation
+if "focus_chess_window" not in globals() or focus_chess_window is None:
     try:
-        cur_hwnd = win32gui.GetForegroundWindow()
-        cur_title = win32gui.GetWindowText(cur_hwnd).lower()
-        if any(k in cur_title for k in ["chess", "lichess"]):
-            return True  # Already foreground
+        from pointbreak_chess import focus_chess_window
     except Exception:
-        pass
-
-    def enum_cb(hwnd, results):
-        if win32gui.IsWindowVisible(hwnd):
-            title = win32gui.GetWindowText(hwnd).lower()
-            if any(k in title for k in ["chess", "lichess"]):
-                results.append((hwnd, title))
-        return True
-
-    matches = []
-    try:
-        win32gui.EnumWindows(enum_cb, matches)
-    except Exception:
-        pass
-
-    if matches:
-        hwnd = matches[0][0]
-        try:
-            import ctypes
-            if win32gui.IsIconic(hwnd):
-                win32gui.ShowWindow(hwnd, 9)  # SW_RESTORE only if minimized
-            ctypes.windll.user32.SetForegroundWindow(hwnd)
-            time.sleep(0.2)
-            print(f"[Focus Chess Window] Brought '{matches[0][1]}' to foreground.")
-            return True
-        except Exception as e:
-            print("[Focus Chess Window Notice]:", e)
-    return False
+        def focus_chess_window() -> bool:
+            return False
 
 
 class UniversalTakeoverEngine:
@@ -491,7 +462,7 @@ CRITICAL INSTRUCTIONS:
             return True
         return False
 
-    def take_over_chess_game(self, single_move: bool = False, speak_fn: Optional[Callable[[str], None]] = None, update_status_fn: Optional[Callable[[Dict[str, Any]], None]] = None) -> bool:
+    def take_over_chess_game(self, single_move: bool = False, forced_color: Optional[str] = None, speak_fn: Optional[Callable[[str], None]] = None, update_status_fn: Optional[Callable[[Dict[str, Any]], None]] = None) -> bool:
         """
         High-Speed Silent Grandmaster Chess Takeover (Stockfish 16 NNUE):
         - Completely silent: zero voice interruptions during play.
@@ -511,6 +482,7 @@ CRITICAL INSTRUCTIONS:
             try:
                 if run_autonomous_chess_game:
                     run_autonomous_chess_game(
+                        forced_color=forced_color,
                         time_delay_target=3.2,
                         single_move=single_move,
                         is_stop_requested=lambda: self.stop_requested or not self.is_active
@@ -685,7 +657,12 @@ Output ONLY valid JSON:
         # 1. Explicit Chess Commands
         if any(k in low_cmd for k in ["chess", "lichess", "checkmate", "play my move", "make a move", "make the move", "play chess", "win chess"]):
             single_move = any(s in low_cmd for s in ["make a move", "make the move", "play my move", "single move", "one move", "play this move"])
-            return self.take_over_chess_game(single_move=single_move, speak_fn=speak_fn, update_status_fn=update_status_fn)
+            forced_color = None
+            if any(w in low_cmd for w in ["as black", "playing black", "i am black", "color black"]):
+                forced_color = "black"
+            elif any(w in low_cmd for w in ["as white", "playing white", "i am white", "color white"]):
+                forced_color = "white"
+            return self.take_over_chess_game(single_move=single_move, forced_color=forced_color, speak_fn=speak_fn, update_status_fn=update_status_fn)
 
         # 2. Explicit Gmail / Email Takeover Commands
         if any(k in low_cmd for k in ["open the mail", "open that mail", "open it up", "open this mail", "open unread mail", "open email", "open my mail"]):

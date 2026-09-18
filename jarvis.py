@@ -6607,6 +6607,11 @@ def execute_local_fallback(query: str):
 
     if is_takeover_stop:
         try:
+            try:
+                from pointbreak_chess import request_chess_stop
+                request_chess_stop()
+            except Exception:
+                pass
             from pointbreak_takeover import takeover_engine
             takeover_engine.stop_takeover(speak_fn=speak)
             return True
@@ -8281,6 +8286,11 @@ def _execute_single(query: str):
 
     if is_takeover_stop_priority:
         try:
+            try:
+                from pointbreak_chess import request_chess_stop
+                request_chess_stop()
+            except Exception:
+                pass
             from pointbreak_takeover import takeover_engine
             takeover_engine.stop_takeover(speak_fn=speak)
             return True
