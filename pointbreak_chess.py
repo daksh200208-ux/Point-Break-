@@ -24,14 +24,38 @@ import atexit
 import threading
 from typing import Optional, Tuple, Dict, Any, List
 
-# Reconfigure stdout/stderr to avoid Windows charmap encoding crashes
-try:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    if hasattr(sys.stderr, "reconfigure"):
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-except Exception:
-    pass
+CHESS_DIR = os.path.dirname(os.path.abspath(__file__))
+CHESS_LOG_FILE = os.path.join(CHESS_DIR, "chess_engine.log")
+
+class SafeLogStream:
+    def __init__(self, filename):
+        self.filename = filename
+    def write(self, text):
+        try:
+            with open(self.filename, "a", encoding="utf-8", errors="replace") as f:
+                f.write(text)
+        except Exception:
+            pass
+    def flush(self):
+        pass
+
+if sys.stdout is None:
+    sys.stdout = SafeLogStream(CHESS_LOG_FILE)
+else:
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+if sys.stderr is None:
+    sys.stderr = SafeLogStream(CHESS_LOG_FILE)
+else:
+    try:
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 import numpy as np
 import cv2
@@ -42,7 +66,6 @@ from PIL import Image, ImageGrab
 
 pyautogui.PAUSE = 0.01
 
-CHESS_DIR = os.path.dirname(os.path.abspath(__file__))
 BIN_DIR = os.path.join(CHESS_DIR, "bin")
 STOCKFISH_EXE = os.path.join(BIN_DIR, "stockfish.exe")
 CONFIG_FILE = os.path.join(CHESS_DIR, "chess_config.json")
@@ -102,120 +125,101 @@ def capture_desktop_screenshot() -> Optional[Image.Image]:
     return None
 
 
-def is_terminal_or_python_hwnd(hwnd: int) -> bool:
-    """Returns True if hwnd belongs to a console, terminal, cmd, powershell, or python process."""
+def dismiss_stray_terminal_windows():
+    """
+    Finds any stray Windows Terminal (wt.exe), PowerShell, or Command Prompt
+    window that might be covering the screen and forcibly MINIMIZES and CLOSES it.
+    Zero dependency on pywin32 EnumWindows.
+    """
+    import ctypes
+    user32 = ctypes.windll.user32
+    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def _cb(hwnd, _):
+        if user32.IsWindowVisible(hwnd):
+            cls_buff = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, cls_buff, 256)
+            cls_name = cls_buff.value.lower()
+            length = user32.GetWindowTextLengthW(hwnd)
+            title = ""
+            if length > 0:
+                buff = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(hwnd, buff, length + 1)
+                title = buff.value.lower()
+            if "cascadia" in cls_name or "console" in cls_name:
+                if any(k in title for k in ["antigrav", "play_chess", "point break", "cmd.exe", "python"]):
+                    user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE = 6
+                    user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE = 0x0010
+        return True
+
     try:
-        import win32gui
-        import win32process
-        import psutil
-        cls_name = (win32gui.GetClassName(hwnd) or "").lower()
-        if any(c in cls_name for c in ["consolewindowclass", "cascadia_hosting_window_class", "virtualconsoleclass"]):
-            return True
-        title = (win32gui.GetWindowText(hwnd) or "").lower()
-        if any(bad in title for bad in [
-            "cmd.exe", "command prompt", "powershell", "point break",
-            "terminal", "python", "stockfish", "c:\\windows\\system32"
-        ]):
-            return True
-        _, pid = win32process.GetWindowThreadProcessId(hwnd)
-        pname = psutil.Process(pid).name().lower()
-        if any(bad in pname for bad in [
-            "cmd.exe", "powershell.exe", "openconsole.exe",
-            "windowsterminal.exe", "conhost.exe", "python.exe", "pythonw.exe"
-        ]):
-            return True
+        user32.EnumWindows(WNDENUMPROC(_cb), 0)
     except Exception:
         pass
-    return False
 
 
 def focus_chess_window() -> bool:
     """
-    Finds and brings the actual web browser (Chrome, Edge, Firefox, Brave)
-    running Chess.com or Lichess to the foreground and MAXIMIZES it.
-    Strictly filters out and minimizes any console or terminal window.
+    Brings the web browser (Chrome, Edge, Firefox, Brave) running Chess.com or Lichess
+    to the foreground, MAXIMIZES it full-screen, and banishes all console/terminal windows.
+    Zero crashes. Pure ctypes implementation.
     """
+    import ctypes
+    user32 = ctypes.windll.user32
+
+    # 1. Banish any stray terminal windows covering the screen
+    dismiss_stray_terminal_windows()
+
+    target_hwnd = None
+    fallback_hwnd = None
+
+    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def _cb(hwnd, _):
+        nonlocal target_hwnd, fallback_hwnd
+        if user32.IsWindowVisible(hwnd):
+            cls_buff = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, cls_buff, 256)
+            cls_name = cls_buff.value.lower()
+
+            # Skip all console, cmd, and Windows Terminal windows
+            if "cascadia" in cls_name or "console" in cls_name:
+                return True
+
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length > 0:
+                buff = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(hwnd, buff, length + 1)
+                title = buff.value.lower()
+
+                # Skip any development or terminal windows
+                if any(bad in title for bad in ["cmd.exe", "powershell", "python", "point break", "antigrav"]):
+                    return True
+
+                if any(k in title for k in ["chess.com", "lichess"]):
+                    target_hwnd = hwnd
+                    return False  # found exact match, stop
+                elif "chess" in title:
+                    if fallback_hwnd is None:
+                        fallback_hwnd = hwnd
+        return True
+
     try:
-        import win32gui
-        import win32process
-        import win32api
-        import win32con
-        import win32console
-        import ctypes
-        import psutil
+        user32.EnumWindows(WNDENUMPROC(_cb), 0)
+    except Exception:
+        pass
 
-        # 1. Immediately drop own console window to taskbar so it NEVER blocks the chessboard
+    chosen = target_hwnd or fallback_hwnd
+    if chosen:
         try:
-            c_hwnd = win32console.GetConsoleWindow()
-            if c_hwnd:
-                win32gui.ShowWindow(c_hwnd, win32con.SW_MINIMIZE)
-        except Exception:
-            pass
-
-        # 2. Check if current active window is ALREADY a valid chess browser
-        cur_hwnd = win32gui.GetForegroundWindow()
-        if cur_hwnd and not is_terminal_or_python_hwnd(cur_hwnd):
-            cur_title = (win32gui.GetWindowText(cur_hwnd) or "").lower()
-            if any(k in cur_title for k in ["chess.com", "lichess", "chess"]):
-                try:
-                    _, pid = win32process.GetWindowThreadProcessId(cur_hwnd)
-                    pname = psutil.Process(pid).name().lower()
-                    if any(b in pname for b in ["chrome", "msedge", "firefox", "brave", "opera", "vivaldi"]):
-                        win32gui.ShowWindow(cur_hwnd, win32con.SW_MAXIMIZE)
-                        return True
-                except Exception:
-                    pass
-
-        # 3. Search all visible top-level windows for Chess in a browser
-        browser_matches = []
-        fallback_matches = []
-
-        def enum_cb(hwnd, extra):
-            if not win32gui.IsWindowVisible(hwnd):
-                return True
-            if is_terminal_or_python_hwnd(hwnd):
-                return True
-            title = (win32gui.GetWindowText(hwnd) or "").lower()
-            if not any(k in title for k in ["chess.com", "lichess", "chess"]):
-                return True
-            try:
-                _, pid = win32process.GetWindowThreadProcessId(hwnd)
-                pname = psutil.Process(pid).name().lower()
-                if any(b in pname for b in ["chrome", "msedge", "firefox", "brave", "opera", "vivaldi"]):
-                    browser_matches.append((hwnd, title, pname))
-                else:
-                    fallback_matches.append((hwnd, title, pname))
-            except Exception:
-                fallback_matches.append((hwnd, title, "unknown"))
-            return True
-
-        win32gui.EnumWindows(enum_cb, None)
-        targets = browser_matches or fallback_matches
-
-        if targets:
-            target_hwnd = targets[0][0]
-            # Restore if minimized, then MAXIMIZE so the chessboard is full-screen
-            if win32gui.IsIconic(target_hwnd):
-                win32gui.ShowWindow(target_hwnd, win32con.SW_RESTORE)
-            win32gui.ShowWindow(target_hwnd, win32con.SW_MAXIMIZE)
-
-            # Bring to foreground with thread input attachment
-            try:
-                fg_hwnd = win32gui.GetForegroundWindow()
-                fg_thread = win32process.GetWindowThreadProcessId(fg_hwnd)[0] if fg_hwnd else 0
-                cur_thread = win32api.GetCurrentThreadId()
-                if fg_thread and fg_thread != cur_thread:
-                    win32process.AttachThreadInput(cur_thread, fg_thread, True)
-                win32gui.SetForegroundWindow(target_hwnd)
-                if fg_thread and fg_thread != cur_thread:
-                    win32process.AttachThreadInput(cur_thread, fg_thread, False)
-            except Exception:
-                ctypes.windll.user32.SetForegroundWindow(target_hwnd)
-
+            # Restore if minimized, then MAXIMIZE full-screen
+            user32.ShowWindow(chosen, 9)  # SW_RESTORE
+            user32.ShowWindow(chosen, 3)  # SW_MAXIMIZE
+            user32.SetForegroundWindow(chosen)
             time.sleep(0.25)
             return True
-    except Exception as e:
-        print(f"[Focus Chess Error]: {e}")
+        except Exception as e:
+            print(f"[Focus Window Error]: {e}")
     return False
 
 
@@ -431,8 +435,9 @@ def calibrate_board_interactively() -> Tuple[int, int, int, int]:
 
 def detect_player_color_from_board(screen_img: Image.Image, board_bbox: Tuple[int, int, int, int]) -> str:
     """
-    Determines player color by sampling the center piece contrast of bottom rank vs top rank.
-    Piece centers avoid background square color interference.
+    Determines player color by sampling piece brightness on bottom ranks vs top ranks.
+    Samples both major pieces (row 7 vs row 0) and pawn rows (row 6 vs row 1).
+    White pieces are bright (>160), Black pieces are dark (<95).
     """
     bx1, by1, bx2, by2 = board_bbox
     bw = bx2 - bx1
@@ -449,32 +454,33 @@ def detect_player_color_from_board(screen_img: Image.Image, board_bbox: Tuple[in
     bottom_samples = []
     top_samples = []
 
+    rad = max(2, int(sq_w * 0.12))
     for col in range(8):
-        # Center 25% of bottom rank square (row 7)
-        bcx = int((col + 0.5) * sq_w)
-        bcy = int((7 + 0.5) * sq_h)
-        rad = max(2, int(sq_w * 0.10))
-        patch_b = gray[max(0, bcy - rad):min(gray.shape[0], bcy + rad),
-                       max(0, bcx - rad):min(gray.shape[1], bcx + rad)]
-        if patch_b.size > 0:
-            bottom_samples.append(float(np.median(patch_b)))
+        # Sample bottom ranks (row 7 major pieces, row 6 pawns)
+        for r_idx in [7, 6]:
+            bcx = int((col + 0.5) * sq_w)
+            bcy = int((r_idx + 0.5) * sq_h)
+            patch_b = gray[max(0, bcy - rad):min(gray.shape[0], bcy + rad),
+                           max(0, bcx - rad):min(gray.shape[1], bcx + rad)]
+            if patch_b.size > 0:
+                bottom_samples.append(float(np.median(patch_b)))
 
-        # Center 25% of top rank square (row 0)
-        tcx = int((col + 0.5) * sq_w)
-        tcy = int((0 + 0.5) * sq_h)
-        patch_t = gray[max(0, tcy - rad):min(gray.shape[0], tcy + rad),
-                       max(0, tcx - rad):min(gray.shape[1], tcx + rad)]
-        if patch_t.size > 0:
-            top_samples.append(float(np.median(patch_t)))
+        # Sample top ranks (row 0 major pieces, row 1 pawns)
+        for r_idx in [0, 1]:
+            tcx = int((col + 0.5) * sq_w)
+            tcy = int((r_idx + 0.5) * sq_h)
+            patch_t = gray[max(0, tcy - rad):min(gray.shape[0], tcy + rad),
+                           max(0, tcx - rad):min(gray.shape[1], tcx + rad)]
+            if patch_t.size > 0:
+                top_samples.append(float(np.median(patch_t)))
 
     if bottom_samples and top_samples:
         avg_bottom = float(np.mean(bottom_samples))
         avg_top = float(np.mean(top_samples))
 
-        # White pieces are bright (>160), Black pieces are dark (<95)
-        if avg_bottom > avg_top + 18:
+        if avg_bottom > avg_top + 12:
             return "white"
-        elif avg_top > avg_bottom + 18:
+        elif avg_top > avg_bottom + 12:
             return "black"
 
     return "white"
