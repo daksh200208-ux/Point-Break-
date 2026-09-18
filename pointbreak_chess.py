@@ -1,5 +1,5 @@
 """
-Point Break 3.0 — Autonomous Grandmaster Chess Titan (Stockfish 16 NNUE)
+Point Break 3.0 -- Autonomous Grandmaster Chess Titan (Stockfish 16 NNUE)
 =======================================================================
 Ultra-fast, silent, tournament-grade execution:
 1. 100% Silent Autonomous Play: Zero voice interruptions during match.
@@ -9,7 +9,8 @@ Ultra-fast, silent, tournament-grade execution:
 4. Robust Multi-Theme Vision: Detects Green, Wood, Blue, and Dark board themes.
 5. High-Precision Color Detection: Piece-center contrast determines White vs Black.
 6. Anti-Self-Detection: Tracks previous moves to prevent false highlight loops.
-7. Dedicated Interactive Console HUD with ASCII board representation and hotkeys.
+7. Dedicated Interactive Console HUD with live ASCII board and visual cursor verify.
+8. Standard ASCII console output: 100% crash-free in Windows cp1252 / UTF-8.
 """
 
 import os
@@ -22,6 +23,15 @@ import random
 import atexit
 import threading
 from typing import Optional, Tuple, Dict, Any, List
+
+# Reconfigure stdout/stderr to avoid Windows charmap encoding crashes
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 import numpy as np
 import cv2
@@ -37,9 +47,8 @@ BIN_DIR = os.path.join(CHESS_DIR, "bin")
 STOCKFISH_EXE = os.path.join(BIN_DIR, "stockfish.exe")
 CONFIG_FILE = os.path.join(CHESS_DIR, "chess_config.json")
 
-# Default 1920x1080 maximized browser on Chess.com:
-# Left sidebar ~180px, top bar ~130px, board is ~780x780 px
-DEFAULT_BOARD_BBOX = (260, 140, 1040, 920)
+# Standard 1080p maximized browser on Chess.com:
+DEFAULT_BOARD_BBOX = (315, 175, 1095, 955)
 
 
 def load_chess_config() -> Dict[str, Any]:
@@ -49,8 +58,7 @@ def load_chess_config() -> Dict[str, Any]:
                 data = json.load(f)
                 bbox = data.get("board_bbox")
                 if bbox and len(bbox) == 4 and all(isinstance(v, (int, float)) for v in bbox):
-                    # Check for non-zero dimensions
-                    if (bbox[2] - bbox[0]) > 200 and (bbox[3] - bbox[1]) > 200:
+                    if (bbox[2] - bbox[0]) > 250 and (bbox[3] - bbox[1]) > 250:
                         return data
         except Exception:
             pass
@@ -97,6 +105,8 @@ def focus_chess_window() -> bool:
     """Brings Chess window (Chrome, Edge, Firefox, Brave) to foreground smoothly."""
     try:
         import win32gui
+        import win32process
+        import win32api
         import ctypes
 
         cur_hwnd = win32gui.GetForegroundWindow()
@@ -117,7 +127,14 @@ def focus_chess_window() -> bool:
             hwnd = matches[0][0]
             if win32gui.IsIconic(hwnd):
                 win32gui.ShowWindow(hwnd, 9)  # SW_RESTORE
-            ctypes.windll.user32.SetForegroundWindow(hwnd)
+            try:
+                fg_thread = win32process.GetWindowThreadProcessId(win32gui.GetForegroundWindow())[0]
+                cur_thread = win32api.GetCurrentThreadId()
+                win32process.AttachThreadInput(cur_thread, fg_thread, True)
+                win32gui.SetForegroundWindow(hwnd)
+                win32process.AttachThreadInput(cur_thread, fg_thread, False)
+            except Exception:
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
             time.sleep(0.15)
             return True
     except Exception:
@@ -238,38 +255,59 @@ class PointBreakStockfish:
 def detect_chessboard_bounds(screen_img: Image.Image) -> Tuple[int, int, int, int]:
     """
     Finds the exact chessboard outer border [x1, y1, x2, y2] across multiple themes.
-    Falls back to saved config or 1080p center-left standard layout.
+    Uses:
+    1. Dark background contrast segmentation (Chess.com layout).
+    2. Morphological green square mask clustering.
+    3. Config fallback or standard 1080p center-left coordinates.
     """
     w, h = screen_img.size
     cv_img = cv2.cvtColor(np.array(screen_img), cv2.COLOR_RGB2BGR)
-    hsv = cv2.cvtColor(cv_img, cv2.COLOR_BGR2HSV)
-
-    # 1. Color Mask Candidates: Chess.com Green, Brown/Wood, Blue
-    masks = [
-        cv2.inRange(hsv, np.array([30, 30, 50]), np.array([85, 255, 255])),   # Green
-        cv2.inRange(hsv, np.array([10, 30, 80]), np.array([28, 220, 255])),   # Brown/Wood
-        cv2.inRange(hsv, np.array([90, 20, 80]), np.array([130, 200, 255])),  # Blue
-    ]
+    gray = cv2.cvtColor(cv_img, cv2.COLOR_RGB2GRAY)
 
     best_bbox = None
     max_area = 0
 
-    for m in masks:
-        contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area > (min(w, h) * 0.40) ** 2:
-                x, y, bw, bh = cv2.boundingRect(cnt)
-                ratio = float(bw) / float(bh) if bh > 0 else 0
-                if 0.92 <= ratio <= 1.08 and area > max_area:
-                    max_area = area
-                    best_bbox = (x, y, x + bw, y + bh)
+    # Strategy 1: Dark background threshold + morphological close
+    # Chess.com page background is dark grey (<60), board squares are >110
+    _, thresh = cv2.threshold(gray, 70, 255, cv2.THRESH_BINARY)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+
+    cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for cnt in cnts:
+        area = cv2.contourArea(cnt)
+        if area > 120000:
+            x, y, bw, bh = cv2.boundingRect(cnt)
+            ratio = float(bw) / float(bh) if bh > 0 else 0
+            if 0.92 <= ratio <= 1.08 and area > max_area:
+                max_area = area
+                best_bbox = (x, y, x + bw, y + bh)
 
     if best_bbox:
         save_chess_config({"board_bbox": list(best_bbox)})
         return best_bbox
 
-    # 2. Config Fallback
+    # Strategy 2: HSV Green Mask with Morphological Close (bridges the 32 green squares)
+    hsv = cv2.cvtColor(cv_img, cv2.COLOR_BGR2HSV)
+    green_mask = cv2.inRange(hsv, np.array([30, 30, 50]), np.array([85, 255, 255]))
+    kernel_g = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 40))
+    closed_g = cv2.morphologyEx(green_mask, cv2.MORPH_CLOSE, kernel_g)
+
+    cnts_g, _ = cv2.findContours(closed_g, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for cnt in cnts_g:
+        area = cv2.contourArea(cnt)
+        if area > 100000:
+            x, y, bw, bh = cv2.boundingRect(cnt)
+            ratio = float(bw) / float(bh) if bh > 0 else 0
+            if 0.90 <= ratio <= 1.10 and area > max_area:
+                max_area = area
+                best_bbox = (x, y, x + bw, y + bh)
+
+    if best_bbox:
+        save_chess_config({"board_bbox": list(best_bbox)})
+        return best_bbox
+
+    # Strategy 3: Config Fallback
     cfg = load_chess_config()
     bbox = cfg.get("board_bbox")
     if bbox and len(bbox) == 4:
@@ -277,8 +315,41 @@ def detect_chessboard_bounds(screen_img: Image.Image) -> Tuple[int, int, int, in
         if (bx2 - bx1) > 300 and (by2 - by1) > 300:
             return (bx1, by1, bx2, by2)
 
-    # 3. Standard 1080p center-left default
     return DEFAULT_BOARD_BBOX
+
+
+def calibrate_board_interactively() -> Tuple[int, int, int, int]:
+    """Allows operator to click top-left and bottom-right corners for 100% precision."""
+    print("\n" + "=" * 60)
+    print("   INTERACTIVE CHESSBOARD CALIBRATION")
+    print("   Move your mouse to the TOP-LEFT corner of the board (a8).")
+    print("   Recording in 4 seconds...")
+    print("=" * 60)
+    for i in range(4, 0, -1):
+        print(f"   [Recording Top-Left]: {i}s...")
+        time.sleep(1.0)
+    x1, y1 = pyautogui.position()
+    print(f"   [+] Top-Left Recorded: ({x1}, {y1})")
+
+    print("\n   Now move your mouse to the BOTTOM-RIGHT corner (h1).")
+    print("   Recording in 4 seconds...")
+    for i in range(4, 0, -1):
+        print(f"   [Recording Bottom-Right]: {i}s...")
+        time.sleep(1.0)
+    x2, y2 = pyautogui.position()
+    print(f"   [+] Bottom-Right Recorded: ({x2}, {y2})")
+
+    bw = abs(x2 - x1)
+    bh = abs(y2 - y1)
+    # Ensure square aspect
+    side = max(bw, bh)
+    bx1 = min(x1, x2)
+    by1 = min(y1, y2)
+    new_bbox = (bx1, by1, bx1 + side, by1 + side)
+
+    save_chess_config({"board_bbox": list(new_bbox)})
+    print(f"\n[+] Calibrated Board Saved: {new_bbox} ({side}x{side} px)")
+    return new_bbox
 
 
 def detect_player_color_from_board(screen_img: Image.Image, board_bbox: Tuple[int, int, int, int]) -> str:
@@ -298,22 +369,20 @@ def detect_player_color_from_board(screen_img: Image.Image, board_bbox: Tuple[in
 
     gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
 
-    # Sample square centers for Rank 1 (bottom, user perspective) and Rank 8 (top, opponent)
     bottom_samples = []
     top_samples = []
 
-    # Check the central squares (columns 1..6: Knights, Bishops, Queen, King)
     for col in range(8):
-        # Center 30% of bottom rank square (row 7)
+        # Center 25% of bottom rank square (row 7)
         bcx = int((col + 0.5) * sq_w)
         bcy = int((7 + 0.5) * sq_h)
-        rad = max(2, int(sq_w * 0.12))
+        rad = max(2, int(sq_w * 0.10))
         patch_b = gray[max(0, bcy - rad):min(gray.shape[0], bcy + rad),
                        max(0, bcx - rad):min(gray.shape[1], bcx + rad)]
         if patch_b.size > 0:
             bottom_samples.append(float(np.median(patch_b)))
 
-        # Center 30% of top rank square (row 0)
+        # Center 25% of top rank square (row 0)
         tcx = int((col + 0.5) * sq_w)
         tcy = int((0 + 0.5) * sq_h)
         patch_t = gray[max(0, tcy - rad):min(gray.shape[0], tcy + rad),
@@ -325,13 +394,12 @@ def detect_player_color_from_board(screen_img: Image.Image, board_bbox: Tuple[in
         avg_bottom = float(np.mean(bottom_samples))
         avg_top = float(np.mean(top_samples))
 
-        # White pieces are bright (>170), Black pieces are dark (<90)
-        if avg_bottom > avg_top + 20:
+        # White pieces are bright (>160), Black pieces are dark (<95)
+        if avg_bottom > avg_top + 18:
             return "white"
-        elif avg_top > avg_bottom + 20:
+        elif avg_top > avg_bottom + 18:
             return "black"
 
-    # Default to white if ambiguous
     return "white"
 
 
@@ -370,7 +438,7 @@ def detect_opponent_move_fast(
     last_my_move: Optional[chess.Move] = None
 ) -> Optional[chess.Move]:
     """
-    Rapid 5ms move detection: checks all 64 squares for move highlights.
+    Rapid move detection: checks all 64 squares for move highlights.
     Filters out last_my_move highlights to prevent self-detection loops.
     Matches against board.legal_moves.
     """
@@ -390,7 +458,6 @@ def detect_opponent_move_fast(
         my_move_squares.add(chess.square_name(last_my_move.from_square))
         my_move_squares.add(chess.square_name(last_my_move.to_square))
 
-    # Sample 4 corner/edge points in each square to avoid piece occlusions
     sample_offsets = [
         (0.18, 0.18), (0.82, 0.18),
         (0.18, 0.82), (0.82, 0.82)
@@ -416,16 +483,14 @@ def detect_opponent_move_fast(
                     if is_yellow_highlight(r, g, b) or is_lichess_highlight(r, g, b) or is_blue_highlight(r, g, b):
                         hl_count += 1
 
-            # If at least 2 sample points confirm highlight
             if hl_count >= 2:
                 highlighted_squares.add(sq_name)
 
-    # If the only highlights on the board are our own previous move, opponent hasn't moved yet!
+    # Ignore highlights that only match our previous move
     if highlighted_squares and my_move_squares:
         if highlighted_squares == my_move_squares or highlighted_squares.issubset(my_move_squares):
             return None
 
-    # Check legal moves matching the newly highlighted squares
     candidate_moves = []
     for legal_m in board.legal_moves:
         from_name = chess.square_name(legal_m.from_square)
@@ -436,7 +501,6 @@ def detect_opponent_move_fast(
     if len(candidate_moves) == 1:
         return candidate_moves[0]
     elif len(candidate_moves) > 1:
-        # If promotion or disambiguation, prefer queen promotion
         for m in candidate_moves:
             if m.promotion == chess.QUEEN:
                 return m
@@ -452,11 +516,12 @@ def execute_rapid_mouse_move(
     player_color: str = "white"
 ) -> bool:
     """
-    Executes a clean, physical move on screen:
-    1. Click piece -> click destination (Chess.com / Lichess native click-to-move)
-    2. Fallback drag-and-drop
-    3. Auto-confirms queen promotion
-    4. Parks cursor off-board to prevent highlight occlusions
+    Executes physical piece move on screen:
+    1. Click and hold on from_sq (80ms hold ensures Chromium event registration)
+    2. Smooth drag to to_sq
+    3. Click-to-move tap
+    4. Auto-confirms queen promotion
+    5. Parks cursor off-board
     """
     cx1, cy1 = get_square_center(board_bbox, from_sq, player_color)
     cx2, cy2 = get_square_center(board_bbox, to_sq, player_color)
@@ -467,31 +532,30 @@ def execute_rapid_mouse_move(
     if not (0 <= cx2 < screen_w and 0 <= cy2 < screen_h - 20):
         return False
 
-    # 1. Click to select piece
-    pyautogui.moveTo(cx1, cy1, duration=0.07)
-    pyautogui.click(cx1, cy1)
-    time.sleep(0.04)
+    # 1. Select piece with 60ms hold
+    pyautogui.moveTo(cx1, cy1, duration=0.08)
+    pyautogui.mouseDown(cx1, cy1, button='left')
+    time.sleep(0.06)
 
-    # 2. Click destination
-    pyautogui.moveTo(cx2, cy2, duration=0.09)
-    pyautogui.click(cx2, cy2)
+    # 2. Smooth drag to destination
+    pyautogui.moveTo(cx2, cy2, duration=0.14)
+    time.sleep(0.04)
+    pyautogui.mouseUp(cx2, cy2, button='left')
     time.sleep(0.03)
 
-    # 3. Fallback Drag: in case click-to-move was not enabled in player settings
-    pyautogui.mouseDown(cx1, cy1, button='left')
-    time.sleep(0.02)
-    pyautogui.moveTo(cx2, cy2, duration=0.10)
-    time.sleep(0.02)
+    # 3. Click-to-move tap to confirm placement
+    pyautogui.mouseDown(cx2, cy2, button='left')
+    time.sleep(0.05)
     pyautogui.mouseUp(cx2, cy2, button='left')
 
-    # 4. Handle Promotion Modal (clicking destination square confirms Queen)
+    # 4. Handle Promotion Modal (tapping confirms Queen)
     if to_sq[1] in ('1', '8'):
         time.sleep(0.08)
         pyautogui.click(cx2, cy2)
 
     # 5. Park mouse off-board so cursor doesn't cover highlights
     bx1 = board_bbox[0]
-    park_x = max(15, bx1 - 40)
+    park_x = max(15, bx1 - 50)
     pyautogui.moveTo(park_x, cy2, duration=0.05)
     return True
 
@@ -535,10 +599,10 @@ def run_autonomous_chess_game(
     - Moves in 3.0 to 3.8 seconds after opponent moves.
     - 100% silent. Zero speech interruption.
     - Stockfish 16 NNUE (3500+ ELO).
-    - Visual terminal HUD with live board updates and hotkeys.
+    - Visual terminal HUD with live board updates and cursor verification.
     """
     print("\n" + "=" * 70)
-    print("   POINT BREAK 3.0  //  AUTONOMOUS GRANDMASTER CHESS TITAN")
+    print("   POINT BREAK 3.0 -- AUTONOMOUS GRANDMASTER CHESS TITAN")
     print("   Engine: Stockfish 16 NNUE (3500+ ELO) | 100% Silent Mode")
     print(f"   Target Speed: {time_delay_target:.1f}s after opponent moves")
     print("=" * 70)
@@ -559,7 +623,20 @@ def run_autonomous_chess_game(
         return
 
     board_bbox = detect_chessboard_bounds(shot)
-    print(f"[+] Chessboard located: [X1={board_bbox[0]}, Y1={board_bbox[1]}, X2={board_bbox[2]}, Y2={board_bbox[3]}] ({board_bbox[2]-board_bbox[0]}x{board_bbox[3]-board_bbox[1]} px)")
+    bw = board_bbox[2] - board_bbox[0]
+    bh = board_bbox[3] - board_bbox[1]
+    print(f"[+] Chessboard Locked: [X1={board_bbox[0]}, Y1={board_bbox[1]}, X2={board_bbox[2]}, Y2={board_bbox[3]}] ({bw}x{bh} px)")
+
+    # Visual Cursor Verification: jump cursor to board center and corners
+    try:
+        mcx = int((board_bbox[0] + board_bbox[2]) / 2)
+        mcy = int((board_bbox[1] + board_bbox[3]) / 2)
+        pyautogui.moveTo(mcx, mcy, duration=0.15)
+        time.sleep(0.10)
+        pyautogui.moveTo(max(15, board_bbox[0] - 40), mcy, duration=0.10)
+        print("[+] Visual cursor verification completed (Board centered).")
+    except Exception:
+        pass
 
     # 3. Detect Player Color
     if forced_color and forced_color.lower() in ("white", "black"):
@@ -573,7 +650,7 @@ def run_autonomous_chess_game(
     last_my_move: Optional[chess.Move] = None
     moves_made = 0
 
-    print("\n[+] Controls: [Ctrl+C] Quit | Auto-Play Armed & Running")
+    print("\n[+] Controls: [Ctrl+C] Pause/Quit | Auto-Play Armed & Running")
     print("-" * 70)
 
     # 4. IF WE ARE WHITE: Play Opening Move Instantly
@@ -587,15 +664,38 @@ def run_autonomous_chess_game(
             board.push(my_move)
             last_my_move = my_move
             moves_made += 1
-            print(f"[⚡ Stockfish 16]: Opening Move -> {res['uci']} (Depth {res['depth']}, Eval: {res['score']:+.2f})")
+            print(f"[Stockfish 16]: Opening Move -> {res['uci']} (Depth {res['depth']}, Eval: {res['score']:+.2f})")
             print(format_board_ascii(board, player_color))
             if single_move:
                 print("\n[+] Single move executed. Exiting.")
                 return
+    else:
+        # Check if White has ALREADY played opening move
+        print("\n[*] Playing as BLACK. Checking if White already moved...")
+        curr_shot = capture_desktop_screenshot()
+        if curr_shot:
+            white_opener = detect_opponent_move_fast(curr_shot, board, board_bbox, "black")
+            if white_opener and white_opener in board.legal_moves:
+                print(f"[+] Detected White opening move: {white_opener.uci()}")
+                board.push(white_opener)
+                print(format_board_ascii(board, player_color))
+
+                # Counter immediately
+                res = chess_engine.query_best_move(board, time_limit=0.25)
+                if res and res.get("success"):
+                    my_move = res["move"]
+                    time.sleep(1.2)
+                    execute_rapid_mouse_move(board_bbox, res["from_sq"], res["to_sq"], "black")
+                    board.push(my_move)
+                    last_my_move = my_move
+                    moves_made += 1
+                    print(f"[Stockfish 16]: Counter Move -> {my_move.uci()} (Eval: {res.get('score', 0):+.2f})")
+                    print(format_board_ascii(board, player_color))
 
     # 5. Autonomous Game Loop
     print("\n[*] Watching board for opponent moves...")
-    last_opp_detect_time = 0.0
+    scan_count = 0
+    last_heartbeat_time = time.time()
 
     while True:
         try:
@@ -607,13 +707,13 @@ def run_autonomous_chess_game(
                 print("=" * 70)
                 break
 
-            # Poll screen for move highlights
+            scan_count += 1
             curr_shot = capture_desktop_screenshot()
             if curr_shot:
                 opp_move = detect_opponent_move_fast(curr_shot, board, board_bbox, player_color, last_my_move)
                 if opp_move and opp_move in board.legal_moves:
                     t_detect = time.time()
-                    print(f"\n[⚡ Opponent Moved]: {opp_move.uci()} -> Pushing to matrix...")
+                    print(f"\n[Opponent Moved]: {opp_move.uci()} -> Pushing to matrix...")
                     board.push(opp_move)
                     print(format_board_ascii(board, player_color))
 
@@ -621,14 +721,14 @@ def run_autonomous_chess_game(
                         print("\n[+] Game concluded after opponent move.")
                         break
 
-                    # Calculate best move in ~200ms with Stockfish 16
+                    # Calculate best move with Stockfish 16 in ~200ms
                     res = chess_engine.query_best_move(board, time_limit=0.25)
                     if res and res.get("success"):
                         my_move = res["move"]
                         eval_str = f"Mate in {res['mate']}" if res.get('mate') else f"{res.get('score', 0):+.2f}"
                         print(f"[Stockfish 16 NNUE]: Depth {res.get('depth', 16)} | Eval: {eval_str} | Best Move: {my_move.uci()}")
 
-                        # Exact 3.0s - 3.8s move timing target as requested by user
+                        # Exact 3.0s - 3.8s move timing target
                         target_delay = random.uniform(time_delay_target - 0.2, time_delay_target + 0.4)
                         elapsed_so_far = time.time() - t_detect
                         remaining_wait = max(0.1, target_delay - elapsed_so_far)
@@ -640,7 +740,7 @@ def run_autonomous_chess_game(
                         last_my_move = my_move
                         moves_made += 1
                         total_time = time.time() - t_detect
-                        print(f"[✓ Executed Move #{moves_made}]: {my_move.uci()} in {total_time:.2f}s total")
+                        print(f"[Executed Move #{moves_made}]: {my_move.uci()} in {total_time:.2f}s total")
                         print(format_board_ascii(board, player_color))
 
                     if single_move:
@@ -649,13 +749,21 @@ def run_autonomous_chess_game(
 
                     print("\n[*] Waiting for opponent's next move...")
 
+            # Heartbeat message every 2.5 seconds
+            now = time.time()
+            if now - last_heartbeat_time > 2.5:
+                turn_label = "Your Turn" if (board.turn == (chess.WHITE if player_color == "white" else chess.BLACK)) else "Opponent Turn"
+                sys.stdout.write(f"\r[*] Active Scan #{scan_count} ({turn_label}) | Board Locked at {board_bbox}   ")
+                sys.stdout.flush()
+                last_heartbeat_time = now
+
             time.sleep(0.20)
 
         except KeyboardInterrupt:
             print("\n[!] Autonomous Chess paused by operator.")
             break
         except Exception as e:
-            print(f"[Loop Exception]: {e}")
+            print(f"\n[Loop Exception]: {e}")
             time.sleep(0.5)
 
 
@@ -663,14 +771,17 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Point Break 3.0 Grandmaster Chess Titan")
     parser.add_argument("--auto", action="store_true", help="Launch full autonomous play loop immediately")
+    parser.add_argument("--calibrate", action="store_true", help="Calibrate board coordinates interactively")
     parser.add_argument("--color", choices=["white", "black"], default=None, help="Force player color (white/black)")
     parser.add_argument("--delay", type=float, default=3.2, help="Target seconds after opponent move (default: 3.2s)")
     parser.add_argument("--single", action="store_true", help="Make a single best move and exit")
     args = parser.parse_args()
 
-    # Default to auto-play if run without arguments
-    run_autonomous_chess_game(
-        forced_color=args.color,
-        time_delay_target=args.delay,
-        single_move=args.single
-    )
+    if args.calibrate:
+        calibrate_board_interactively()
+    else:
+        run_autonomous_chess_game(
+            forced_color=args.color,
+            time_delay_target=args.delay,
+            single_move=args.single
+        )
