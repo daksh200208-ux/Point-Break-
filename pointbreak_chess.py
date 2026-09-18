@@ -66,9 +66,17 @@ BIN_DIR = os.path.join(CHESS_DIR, "bin")
 STOCKFISH_EXE = os.path.join(BIN_DIR, "stockfish.exe")
 CONFIG_FILE = os.path.join(CHESS_DIR, "chess_config.json")
 STOP_FLAG_FILE = os.path.join(CHESS_DIR, "chess_stop.flag")
+PIECE_DIR = os.path.join(CHESS_DIR, "assets", "pieces", "neo")
+
+_CACHED_TEMPLATES: Dict[Tuple[int, int], Dict[str, Tuple[np.ndarray, np.ndarray]]] = {}
+FEN_MAP = {
+    'wp': 'P', 'wn': 'N', 'wb': 'B', 'wr': 'R', 'wq': 'Q', 'wk': 'K',
+    'bp': 'p', 'bn': 'n', 'bb': 'b', 'br': 'r', 'bq': 'q', 'bk': 'k'
+}
 
 # Standard 1080p maximized browser on Chess.com:
 DEFAULT_BOARD_BBOX = (334, 283, 884, 833)
+
 
 
 def load_chess_config() -> Dict[str, Any]:
@@ -567,110 +575,224 @@ def get_highlighted_squares(
     return highlighted_squares
 
 
+def get_piece_templates(target_size: Tuple[int, int]) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+    """Loads and caches transparent PNG piece templates resized to target square dimensions."""
+    global _CACHED_TEMPLATES
+    if target_size in _CACHED_TEMPLATES:
+        return _CACHED_TEMPLATES[target_size]
+
+    tw, th = target_size
+    templates = {}
+    pieces = ['wp', 'wn', 'wb', 'wr', 'wq', 'wk', 'bp', 'bn', 'bb', 'br', 'bq', 'bk']
+    for p in pieces:
+        p_path = os.path.join(PIECE_DIR, f"{p}.png")
+        if os.path.exists(p_path):
+            img = cv2.imread(p_path, cv2.IMREAD_UNCHANGED)
+            if img is not None and img.shape[2] == 4:
+                bgr = cv2.resize(img[:, :, :3], (tw, th))
+                alpha = cv2.resize(img[:, :, 3], (tw, th))
+                templates[p] = (bgr, alpha)
+    _CACHED_TEMPLATES[target_size] = templates
+    return templates
+
+
+def classify_single_square(sq_crop: np.ndarray, templates: Dict[str, Tuple[np.ndarray, np.ndarray]]) -> Optional[str]:
+    """Classifies a square crop into a FEN piece symbol or None (empty) with early exit."""
+    h, w = sq_crop.shape[:2]
+    center = sq_crop[int(h * 0.2):int(h * 0.8), int(w * 0.2):int(w * 0.8)]
+    gray = cv2.cvtColor(center, cv2.COLOR_BGR2GRAY)
+    if np.std(gray) < 10.0:
+        return None
+
+    best_p = None
+    best_score = -999.0
+    for k, (tmpl_bgr, tmpl_mask) in templates.items():
+        res = cv2.matchTemplate(sq_crop, tmpl_bgr, cv2.TM_CCOEFF_NORMED, mask=tmpl_mask)
+        score = float(res[0, 0])
+        if not math.isnan(score):
+            if score > 0.80:
+                return FEN_MAP[k]
+            if score > best_score:
+                best_score = score
+                best_p = k
+
+    if best_p and best_score > 0.35:
+        return FEN_MAP[best_p]
+    return None
+
+
+def scan_board_fen(
+    screen_img: Image.Image,
+    board_bbox: Tuple[int, int, int, int],
+    player_color: str = "white"
+) -> str:
+    """Scans all 64 squares visually and returns the FEN piece placement string in < 280ms."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    bx1, by1, bx2, by2 = board_bbox
+    bw = bx2 - bx1
+    bh = by2 - by1
+    sq_w = bw / 8.0
+    sq_h = bh / 8.0
+
+    target_size = (int(round(sq_w)), int(round(sq_h)))
+    templates = get_piece_templates(target_size)
+
+    crop = np.array(screen_img.crop(board_bbox))
+    cv_img = cv2.cvtColor(crop, cv2.COLOR_RGB2BGR)
+
+    is_black = (player_color.lower() == "black")
+
+    crops = []
+    for rank in range(8, 0, -1):
+        for file_idx in range(8):
+            if not is_black:
+                gc = file_idx
+                gr = 8 - rank
+            else:
+                gc = 7 - file_idx
+                gr = rank - 1
+
+            x1 = int(round(gc * sq_w))
+            y1 = int(round(gr * sq_h))
+            x2 = int(round((gc + 1) * sq_w))
+            y2 = int(round((gr + 1) * sq_h))
+            sq_crop = cv_img[y1:y2, x1:x2]
+            if sq_crop.shape[:2] != (target_size[1], target_size[0]):
+                sq_crop = cv2.resize(sq_crop, target_size)
+            crops.append(sq_crop)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda c: classify_single_square(c, templates), crops))
+
+    ranks_fen = []
+    idx = 0
+    for rank in range(8, 0, -1):
+        empty_count = 0
+        rank_str = ""
+        for file_idx in range(8):
+            p = results[idx]
+            idx += 1
+            if p is None:
+                empty_count += 1
+            else:
+                if empty_count > 0:
+                    rank_str += str(empty_count)
+                    empty_count = 0
+                rank_str += p
+        if empty_count > 0:
+            rank_str += str(empty_count)
+        ranks_fen.append(rank_str)
+
+    fen_body = "/".join(ranks_fen)
+    return fen_body
+
+
+def infer_castling_rights(fen_body: str) -> str:
+    """Infers standard castling availability based on king/rook starting positions."""
+    ranks = fen_body.split('/')
+    if len(ranks) != 8:
+        return "KQkq"
+
+    r8 = ranks[0]
+    r1 = ranks[7]
+    castling = ""
+
+    expanded_r1 = ""
+    for ch in r1:
+        if ch.isdigit():
+            expanded_r1 += "." * int(ch)
+        else:
+            expanded_r1 += ch
+    if len(expanded_r1) == 8:
+        if expanded_r1[4] == 'K':
+            if expanded_r1[7] == 'R':
+                castling += "K"
+            if expanded_r1[0] == 'R':
+                castling += "Q"
+
+    expanded_r8 = ""
+    for ch in r8:
+        if ch.isdigit():
+            expanded_r8 += "." * int(ch)
+        else:
+            expanded_r8 += ch
+    if len(expanded_r8) == 8:
+        if expanded_r8[4] == 'k':
+            if expanded_r8[7] == 'r':
+                castling += "k"
+            if expanded_r8[0] == 'r':
+                castling += "q"
+
+    return castling if castling else "-"
+
+
 def sync_game_state_or_midgame(
     curr_screen: Image.Image,
     board_bbox: Tuple[int, int, int, int],
     player_color: str = "white"
 ) -> Tuple[chess.Board, Optional[chess.Move], bool]:
     """
-    Synchronizes chessboard state when Point Break takes over fresh or mid-game.
-    1. Checks if an active Chess.com live game can be synced via callback API (TCN decode).
-    2. Detects move highlights currently on the board.
-    3. Reconstructs opening move history if mid-game is detected.
-    Returns: (board, last_opp_move, is_midgame)
+    Direct Visual FEN Synchronization:
+    1. Scans all 64 squares using high-speed template matching (<280ms).
+    2. Determines active turn directly from board highlights or starting position.
+    3. Reconstructs legal chess.Board with full 3500+ ELO Stockfish compatibility.
     """
-    # 1. Check highlighted squares on board right now
+    t0 = time.time()
+    fen_body = scan_board_fen(curr_screen, board_bbox, player_color)
+    t_scan = (time.time() - t0) * 1000
+    print(f"[+] Visual FEN Scanned in {t_scan:.1f}ms: {fen_body}")
+
     hl = get_highlighted_squares(curr_screen, board_bbox, player_color)
-    print(f"[*] Board Highlights Detected: {list(hl) if hl else 'None (Starting Position)'}")
+    is_midgame = (fen_body != "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
 
-    if not hl:
-        return chess.Board(), None, False
+    turn = "w"
+    if is_midgame and hl:
+        piece_on_hl = None
+        for sq_name in hl:
+            col = ord(sq_name[0].lower()) - ord('a')
+            rank = int(sq_name[1])
+            ranks = fen_body.split('/')
+            rank_str = ranks[8 - rank]
+            exp_rank = ""
+            for ch in rank_str:
+                if ch.isdigit():
+                    exp_rank += "." * int(ch)
+                else:
+                    exp_rank += ch
+            p = exp_rank[col]
+            if p != '.':
+                piece_on_hl = p
+                break
 
-    # 2. Try Chess.com live game callback sync
+        if piece_on_hl:
+            moved_color = "white" if piece_on_hl.isupper() else "black"
+            turn = "b" if moved_color == "white" else "w"
+            print(f"[*] Last Move Highlight Detected: Square has {piece_on_hl} ({moved_color}). Active turn -> {'WHITE' if turn == 'w' else 'BLACK'}")
+        else:
+            turn = "w" if player_color == "white" else "b"
+            print(f"[*] Midgame takeover: Defaulting to player turn ({player_color.upper()}).")
+    elif not is_midgame:
+        turn = "w"
+        print("[*] Starting position detected: White to move.")
+    else:
+        turn = "w" if player_color == "white" else "b"
+        print(f"[*] Midgame takeover: Defaulting to player turn ({player_color.upper()}).")
+
+    castling = infer_castling_rights(fen_body)
+    full_fen = f"{fen_body} {turn} {castling} - 0 1"
+
     try:
-        from chess_tcn import decode_tcn
-        game_id = None
+        board = chess.Board(full_fen)
+        print(f"[+] Direct Board Ground Truth Established! Turn={'WHITE' if board.turn == chess.WHITE else 'BLACK'}")
+        return board, None, is_midgame
+    except Exception as e:
+        print(f"[!] FEN Parse fallback: {e}")
         try:
-            import pyperclip
-            cb = pyperclip.paste()
-            m = re.search(r'chess\.com/(?:game|play)/[a-zA-Z0-9_/]*?(\d{8,14})', cb)
-            if m:
-                game_id = m.group(1)
+            board = chess.Board(f"{fen_body} {turn} - - 0 1")
+            return board, None, is_midgame
         except Exception:
-            pass
-
-        if game_id:
-            import urllib.request
-            url = f"https://www.chess.com/callback/live/game/{game_id}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=1.5) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                g = data.get("game", {})
-                tcn_str = g.get("moveList", "")
-                if tcn_str:
-                    moves = decode_tcn(tcn_str)
-                    b = chess.Board()
-                    last_m = None
-                    for m in moves:
-                        uci_str = m["from"] + m["to"] + m.get("promotion", "")
-                        mv = chess.Move.from_uci(uci_str)
-                        b.push(mv)
-                        last_m = mv
-                    print(f"[+] Synced via Chess.com Live Callback! Total Plies: {len(b.move_stack)}")
-                    return b, last_m, True
-    except Exception:
-        pass
-
-    # 3. Vision-based Opening Sequence Reconstruction (Ply 1 to 5)
-    b0 = chess.Board()
-
-    # Case A: Ply 1 (White opened: e.g. 1. e4 or 1. d4)
-    for m1 in b0.legal_moves:
-        f1 = chess.square_name(m1.from_square)
-        t1 = chess.square_name(m1.to_square)
-        if {f1, t1} == hl:
-            b0.push(m1)
-            print(f"[+] Reconstructed White Opening Move: {m1.uci()}")
-            return b0, m1, True
-
-    # Case B: Ply 3 (White moved, Black moved, White moved again: e.g. 1. e4 d6 2. Bc4)
-    std_white_m1 = ["e2e4", "d2d4", "c2c4", "g1f3", "b1c3"]
-    std_black_m1 = ["d7d6", "e7e5", "c7c5", "e7e6", "g8f6", "b8c6", "g7g6", "c7c6", "d7d5"]
-
-    candidate_boards = []
-    for m1_str in std_white_m1:
-        m1 = chess.Move.from_uci(m1_str)
-        if m1 in b0.legal_moves:
-            b0.push(m1)
-            for m2_str in std_black_m1:
-                m2 = chess.Move.from_uci(m2_str)
-                if m2 in b0.legal_moves:
-                    b0.push(m2)
-                    for m3 in b0.legal_moves:
-                        f3 = chess.square_name(m3.from_square)
-                        t3 = chess.square_name(m3.to_square)
-                        if {f3, t3} == hl:
-                            b_copy = b0.copy()
-                            b_copy.push(m3)
-                            candidate_boards.append((b_copy, m3))
-                    b0.pop()
-            b0.pop()
-
-    if candidate_boards:
-        chosen_b, chosen_m = candidate_boards[0]
-        print(f"[+] Reconstructed Opening Sequence: {[m.uci() for m in chosen_b.move_stack]}")
-        return chosen_b, chosen_m, True
-
-    # Case C: Single Move Direct Match in legal moves
-    b_fresh = chess.Board()
-    for m in b_fresh.legal_moves:
-        f = chess.square_name(m.from_square)
-        t = chess.square_name(m.to_square)
-        if f in hl and t in hl:
-            b_fresh.push(m)
-            return b_fresh, m, True
-
-    return chess.Board(), None, False
+            return chess.Board(), None, False
 
 
 def detect_opponent_move_fast(
@@ -818,13 +940,13 @@ def request_chess_stop():
 
 def run_autonomous_chess_game(
     forced_color: Optional[str] = None,
-    time_delay_target: float = 3.2,
+    time_delay_target: float = 1.8,
     single_move: bool = False,
     is_stop_requested: Optional[Any] = None
 ):
     """
     Dedicated Grandmaster Autonomous Chess Engine:
-    - Moves in 3.0 to 3.8 seconds after opponent moves.
+    - Moves in 1.8 to 2.5 seconds after opponent moves.
     - 100% silent. Zero speech interruption.
     - Stockfish 16 NNUE (3500+ ELO).
     - Visual terminal HUD with live board updates and cursor verification.
@@ -979,12 +1101,33 @@ def run_autonomous_chess_game(
             curr_shot = capture_desktop_screenshot()
             if curr_shot:
                 opp_move = detect_opponent_move_fast(curr_shot, board, board_bbox, player_color, last_my_move)
+                turn_triggered = False
+
                 if opp_move and opp_move in board.legal_moves:
                     t_detect = time.time()
                     print(f"\n[Opponent Moved]: {opp_move.uci()} -> Pushing to matrix...")
                     board.push(opp_move)
                     print(format_board_ascii(board, player_color))
+                    turn_triggered = True
+                else:
+                    # Check if highlights changed from our previous move (fail-proof FEN recovery)
+                    hl = get_highlighted_squares(curr_shot, board_bbox, player_color)
+                    my_move_squares = set()
+                    if last_my_move:
+                        my_move_squares.add(chess.square_name(last_my_move.from_square))
+                        my_move_squares.add(chess.square_name(last_my_move.to_square))
 
+                    if hl and not hl.issubset(my_move_squares):
+                        # Visual change detected! Rescan ground-truth FEN directly
+                        new_board, _, _ = sync_game_state_or_midgame(curr_shot, board_bbox, player_color)
+                        if new_board.turn == my_color and not new_board.is_game_over():
+                            t_detect = time.time()
+                            print(f"\n[Visual FEN Trigger]: Ground-truth board resynced! Our turn ({player_color.upper()}).")
+                            board = new_board
+                            print(format_board_ascii(board, player_color))
+                            turn_triggered = True
+
+                if turn_triggered:
                     if board.is_game_over():
                         print("\n[+] Game concluded after opponent move.")
                         break
@@ -993,17 +1136,17 @@ def run_autonomous_chess_game(
                         print("\n[Chess Titan] Move aborted by operator stop request.")
                         break
 
-                    # Calculate best move with Stockfish 16 in ~200ms
+                    # Calculate best move with Stockfish 16 NNUE (~200ms)
                     res = chess_engine.query_best_move(board, time_limit=0.25)
                     if res and res.get("success"):
                         my_move = res["move"]
                         eval_str = f"Mate in {res['mate']}" if res.get('mate') else f"{res.get('score', 0):+.2f}"
                         print(f"[Stockfish 16 NNUE]: Depth {res.get('depth', 16)} | Eval: {eval_str} | Best Move: {my_move.uci()}")
 
-                        # Exact 3.0s - 3.8s move timing target with responsive stop check (50ms slices)
-                        target_delay = random.uniform(time_delay_target - 0.2, time_delay_target + 0.4)
+                        # Target speed delay with responsive 50ms stop polling
+                        target_delay = random.uniform(max(0.5, time_delay_target - 0.2), time_delay_target + 0.3)
                         elapsed_so_far = time.time() - t_detect
-                        remaining_wait = max(0.1, target_delay - elapsed_so_far)
+                        remaining_wait = max(0.05, target_delay - elapsed_so_far)
                         t_wait_start = time.time()
                         while time.time() - t_wait_start < remaining_wait:
                             if check_stop():
@@ -1015,7 +1158,7 @@ def run_autonomous_chess_game(
                             print("\n[Chess Titan] Move aborted by operator stop request before click.")
                             return
 
-                        # Physically execute move
+                        # Physically execute move with 2-click mouse method
                         execute_rapid_mouse_move(board_bbox, res["from_sq"], res["to_sq"], player_color)
                         board.push(my_move)
                         last_my_move = my_move
@@ -1050,8 +1193,6 @@ def run_autonomous_chess_game(
         except Exception as e:
             print(f"\n[Loop Exception]: {e}")
             time.sleep(0.5)
-            print(f"\n[Loop Exception]: {e}")
-            time.sleep(0.5)
 
 
 if __name__ == "__main__":
@@ -1060,7 +1201,7 @@ if __name__ == "__main__":
     parser.add_argument("--auto", action="store_true", help="Launch full autonomous play loop immediately")
     parser.add_argument("--calibrate", action="store_true", help="Calibrate board coordinates interactively")
     parser.add_argument("--color", choices=["white", "black"], default=None, help="Force player color (white/black)")
-    parser.add_argument("--delay", type=float, default=3.2, help="Target seconds after opponent move (default: 3.2s)")
+    parser.add_argument("--delay", type=float, default=1.8, help="Target seconds after opponent move (default: 1.8s)")
     parser.add_argument("--single", action="store_true", help="Make a single best move and exit")
     args = parser.parse_args()
 
