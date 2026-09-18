@@ -22,40 +22,36 @@ import re
 import random
 import atexit
 import threading
+import subprocess
 from typing import Optional, Tuple, Dict, Any, List
 
 CHESS_DIR = os.path.dirname(os.path.abspath(__file__))
 CHESS_LOG_FILE = os.path.join(CHESS_DIR, "chess_engine.log")
 
-class SafeLogStream:
-    def __init__(self, filename):
+class DualLogStream:
+    def __init__(self, filename, orig=None):
         self.filename = filename
+        self.orig = orig
     def write(self, text):
         try:
             with open(self.filename, "a", encoding="utf-8", errors="replace") as f:
                 f.write(text)
         except Exception:
             pass
+        if self.orig and hasattr(self.orig, "write"):
+            try:
+                self.orig.write(text)
+            except Exception:
+                pass
     def flush(self):
-        pass
+        if self.orig and hasattr(self.orig, "flush"):
+            try:
+                self.orig.flush()
+            except Exception:
+                pass
 
-if sys.stdout is None:
-    sys.stdout = SafeLogStream(CHESS_LOG_FILE)
-else:
-    try:
-        if hasattr(sys.stdout, "reconfigure"):
-            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
-
-if sys.stderr is None:
-    sys.stderr = SafeLogStream(CHESS_LOG_FILE)
-else:
-    try:
-        if hasattr(sys.stderr, "reconfigure"):
-            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
+sys.stdout = DualLogStream(CHESS_LOG_FILE, sys.stdout)
+sys.stderr = DualLogStream(CHESS_LOG_FILE, sys.stderr)
 
 import numpy as np
 import cv2
@@ -129,8 +125,15 @@ def dismiss_stray_terminal_windows():
     """
     Finds any stray Windows Terminal (wt.exe), PowerShell, or Command Prompt
     window that might be covering the screen and forcibly MINIMIZES and CLOSES it.
-    Zero dependency on pywin32 EnumWindows.
+    Also terminates OpenConsole.exe and WindowsTerminal.exe instances that could block screen.
     """
+    if sys.platform == "win32":
+        try:
+            subprocess.run(["taskkill", "/F", "/IM", "OpenConsole.exe"], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            subprocess.run(["taskkill", "/F", "/IM", "WindowsTerminal.exe"], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        except Exception:
+            pass
+
     import ctypes
     user32 = ctypes.windll.user32
     WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
@@ -146,10 +149,9 @@ def dismiss_stray_terminal_windows():
                 buff = ctypes.create_unicode_buffer(length + 1)
                 user32.GetWindowTextW(hwnd, buff, length + 1)
                 title = buff.value.lower()
-            if "cascadia" in cls_name or "console" in cls_name:
-                if any(k in title for k in ["antigrav", "play_chess", "point break", "cmd.exe", "python"]):
-                    user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE = 6
-                    user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE = 0x0010
+            if "cascadia" in cls_name or "console" in cls_name or "terminal" in cls_name:
+                user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE = 6
+                user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE = 0x0010
         return True
 
     try:
@@ -253,7 +255,10 @@ class PointBreakStockfish:
                 return True
             if os.path.exists(self.engine_path):
                 try:
-                    self._engine = chess.engine.SimpleEngine.popen_uci(self.engine_path)
+                    popen_args = {}
+                    if sys.platform == "win32":
+                        popen_args["creationflags"] = subprocess.CREATE_NO_WINDOW
+                    self._engine = chess.engine.SimpleEngine.popen_uci(self.engine_path, **popen_args)
                     try:
                         self._engine.configure({"Threads": min(4, os.cpu_count() or 2), "Hash": 64})
                     except Exception:
@@ -727,6 +732,9 @@ def execute_rapid_mouse_move(
     5. Parks mouse off-board so cursor never obscures highlight detection.
     Zero phantom drag-clicks: never leaves pieces inadvertently re-selected!
     """
+    # Ensure browser is foreground before executing mouse actions
+    focus_chess_window()
+
     cx1, cy1 = get_square_center(board_bbox, from_sq, player_color)
     cx2, cy2 = get_square_center(board_bbox, to_sq, player_color)
 
@@ -739,12 +747,12 @@ def execute_rapid_mouse_move(
     # 1. Click source square to select piece
     pyautogui.moveTo(cx1, cy1, duration=0.06)
     pyautogui.click(cx1, cy1)
-    time.sleep(0.06)
+    time.sleep(0.08)
 
     # 2. Click destination square to complete move
     pyautogui.moveTo(cx2, cy2, duration=0.07)
     pyautogui.click(cx2, cy2)
-    time.sleep(0.06)
+    time.sleep(0.08)
 
     # 3. Handle Queen promotion modal if promoting pawn
     if to_sq[1] in ('1', '8'):
