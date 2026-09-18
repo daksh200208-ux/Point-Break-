@@ -589,10 +589,21 @@ def format_board_ascii(board: chess.Board, player_color: str = "white") -> str:
     return "\n".join(lines)
 
 
+# Global stop request signal for external controllers (Voice, HUD, Hotkeys)
+_CHESS_STOP_REQUESTED = False
+
+def request_chess_stop():
+    """Signals autonomous chess loop to gracefully terminate immediately."""
+    global _CHESS_STOP_REQUESTED
+    _CHESS_STOP_REQUESTED = True
+    print("\n[Chess Titan] Stop signal received. Terminating autonomous chess engine...")
+
+
 def run_autonomous_chess_game(
     forced_color: Optional[str] = None,
     time_delay_target: float = 3.2,
-    single_move: bool = False
+    single_move: bool = False,
+    is_stop_requested: Optional[Any] = None
 ):
     """
     Dedicated Grandmaster Autonomous Chess Engine:
@@ -600,12 +611,30 @@ def run_autonomous_chess_game(
     - 100% silent. Zero speech interruption.
     - Stockfish 16 NNUE (3500+ ELO).
     - Visual terminal HUD with live board updates and cursor verification.
+    - Responsive operator disengage / stop polling (< 50ms).
     """
+    global _CHESS_STOP_REQUESTED
+    _CHESS_STOP_REQUESTED = False
+
+    def check_stop() -> bool:
+        if _CHESS_STOP_REQUESTED:
+            return True
+        if is_stop_requested and callable(is_stop_requested):
+            try:
+                return bool(is_stop_requested())
+            except Exception:
+                pass
+        return False
+
     print("\n" + "=" * 70)
     print("   POINT BREAK 3.0 -- AUTONOMOUS GRANDMASTER CHESS TITAN")
     print("   Engine: Stockfish 16 NNUE (3500+ ELO) | 100% Silent Mode")
     print(f"   Target Speed: {time_delay_target:.1f}s after opponent moves")
     print("=" * 70)
+
+    if check_stop():
+        print("[Chess Titan] Stop requested prior to launch. Exiting.")
+        return
 
     # 1. Focus Chess Window
     print("\n[*] Locating Chess window (Chess.com / Lichess)...")
@@ -615,6 +644,10 @@ def run_autonomous_chess_game(
     else:
         print("[!] Note: Active desktop window will be scanned directly.")
     time.sleep(0.3)
+
+    if check_stop():
+        print("[Chess Titan] Stop requested prior to scan. Exiting.")
+        return
 
     # 2. Capture and Locate Board
     shot = capture_desktop_screenshot()
@@ -650,15 +683,21 @@ def run_autonomous_chess_game(
     last_my_move: Optional[chess.Move] = None
     moves_made = 0
 
-    print("\n[+] Controls: [Ctrl+C] Pause/Quit | Auto-Play Armed & Running")
+    print("\n[+] Controls: [Ctrl+C] Pause/Quit | Voice: 'Stop I will take over'")
     print("-" * 70)
 
     # 4. IF WE ARE WHITE: Play Opening Move Instantly
     if player_color == "white":
+        if check_stop():
+            print("\n[Chess Titan] Operator disengaged prior to opening move.")
+            return
         print("\n[1] White to move. Calculating opening move...")
         res = chess_engine.query_best_move(board, time_limit=0.25)
         if res and res.get("success"):
             time.sleep(0.6)
+            if check_stop():
+                print("\n[Chess Titan] Opening move aborted by stop request.")
+                return
             my_move = res["move"]
             execute_rapid_mouse_move(board_bbox, res["from_sq"], res["to_sq"], "white")
             board.push(my_move)
@@ -681,10 +720,16 @@ def run_autonomous_chess_game(
                 print(format_board_ascii(board, player_color))
 
                 # Counter immediately
+                if check_stop():
+                    print("\n[Chess Titan] Counter move aborted by stop request.")
+                    return
                 res = chess_engine.query_best_move(board, time_limit=0.25)
                 if res and res.get("success"):
                     my_move = res["move"]
                     time.sleep(1.2)
+                    if check_stop():
+                        print("\n[Chess Titan] Counter move aborted by stop request.")
+                        return
                     execute_rapid_mouse_move(board_bbox, res["from_sq"], res["to_sq"], "black")
                     board.push(my_move)
                     last_my_move = my_move
@@ -699,6 +744,10 @@ def run_autonomous_chess_game(
 
     while True:
         try:
+            if check_stop():
+                print("\n[Chess Titan] Operator disengaged. Exiting autonomous loop.")
+                break
+
             if board.is_game_over():
                 outcome = board.outcome()
                 print("\n" + "=" * 70)
@@ -721,6 +770,10 @@ def run_autonomous_chess_game(
                         print("\n[+] Game concluded after opponent move.")
                         break
 
+                    if check_stop():
+                        print("\n[Chess Titan] Move aborted by operator stop request.")
+                        break
+
                     # Calculate best move with Stockfish 16 in ~200ms
                     res = chess_engine.query_best_move(board, time_limit=0.25)
                     if res and res.get("success"):
@@ -728,11 +781,20 @@ def run_autonomous_chess_game(
                         eval_str = f"Mate in {res['mate']}" if res.get('mate') else f"{res.get('score', 0):+.2f}"
                         print(f"[Stockfish 16 NNUE]: Depth {res.get('depth', 16)} | Eval: {eval_str} | Best Move: {my_move.uci()}")
 
-                        # Exact 3.0s - 3.8s move timing target
+                        # Exact 3.0s - 3.8s move timing target with responsive stop check (50ms slices)
                         target_delay = random.uniform(time_delay_target - 0.2, time_delay_target + 0.4)
                         elapsed_so_far = time.time() - t_detect
                         remaining_wait = max(0.1, target_delay - elapsed_so_far)
-                        time.sleep(remaining_wait)
+                        t_wait_start = time.time()
+                        while time.time() - t_wait_start < remaining_wait:
+                            if check_stop():
+                                print("\n[Chess Titan] Move aborted by operator stop request during timing delay.")
+                                return
+                            time.sleep(0.05)
+
+                        if check_stop():
+                            print("\n[Chess Titan] Move aborted by operator stop request before click.")
+                            return
 
                         # Physically execute move
                         execute_rapid_mouse_move(board_bbox, res["from_sq"], res["to_sq"], player_color)
@@ -749,6 +811,10 @@ def run_autonomous_chess_game(
 
                     print("\n[*] Waiting for opponent's next move...")
 
+            if check_stop():
+                print("\n[Chess Titan] Operator disengaged. Exiting autonomous loop.")
+                break
+
             # Heartbeat message every 2.5 seconds
             now = time.time()
             if now - last_heartbeat_time > 2.5:
@@ -757,12 +823,14 @@ def run_autonomous_chess_game(
                 sys.stdout.flush()
                 last_heartbeat_time = now
 
-            time.sleep(0.20)
+            time.sleep(0.15)
 
         except KeyboardInterrupt:
             print("\n[!] Autonomous Chess paused by operator.")
             break
         except Exception as e:
+            print(f"\n[Loop Exception]: {e}")
+            time.sleep(0.5)
             print(f"\n[Loop Exception]: {e}")
             time.sleep(0.5)
 

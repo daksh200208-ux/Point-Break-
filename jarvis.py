@@ -6583,9 +6583,29 @@ def execute_local_fallback(query: str):
             return True
 
     # ── POINT BREAK 3.0: UNIVERSAL AUTONOMOUS TAKEOVER ENGINE ───────
-    if any(k in low_query for k in [
-        "stop takeover", "disengage takeover", "release control", "i will take over", "i will take it from here"
-    ]):
+    stop_takeover_phrases = [
+        "stop takeover", "disengage takeover", "release control",
+        "i will take over", "i'll take over", "i take over",
+        "stop i will take over", "stop i'll take over", "stop i take over",
+        "stop playing", "stop chess", "stop bot", "stop the bot",
+        "cancel takeover", "abort takeover", "quit chess", "pause chess",
+        "i will take it from here", "i'll take it from here", "take back control",
+        "let me play", "let me take over", "stop typing", "stop moving",
+        "disengage", "abort game", "cancel chess"
+    ]
+    is_takeover_stop = (
+        any(k in low_query for k in stop_takeover_phrases)
+        or bool(re.search(r'\b(?:stop|cancel|disengage|halt|abort|quit|pause)\b.*(?:take\s*over|control|playing|chess|bot|engine|move|macro|typing)', low_query))
+    )
+    if not is_takeover_stop:
+        try:
+            from pointbreak_takeover import takeover_engine
+            if takeover_engine.is_active and any(w in low_query.split() for w in ["stop", "cancel", "halt", "abort", "freeze", "quit", "pause", "hold"]):
+                is_takeover_stop = True
+        except Exception:
+            pass
+
+    if is_takeover_stop:
         try:
             from pointbreak_takeover import takeover_engine
             takeover_engine.stop_takeover(speak_fn=speak)
@@ -7972,7 +7992,7 @@ def split_compound_commands(query: str) -> list:
             final_commands.append(chunk)
             continue
 
-        if re.search(r'^(?:take\s*over|takeover|play\s+chess|chess\s+takeover)\b', chunk, flags=re.I):
+        if re.search(r'^(?:take\s*over|takeover|play\s+chess|chess\s+takeover|stop\s+(?:i\s*(?:will|\'ll)\s*)?take\s*over)\b', chunk, flags=re.I):
             final_commands.append(re.sub(r'[\s,]+', ' ', chunk).strip())
             continue
 
@@ -8237,9 +8257,29 @@ def _execute_single(query: str):
             print(f"[Browse Dispatch Error]: {e}")
 
     # ── HIGHEST PRIORITY: POINT BREAK 3.0 UNIVERSAL AUTONOMOUS TAKEOVER ENGINE ──
-    if any(k in low_query for k in [
-        "stop takeover", "disengage takeover", "release control", "i will take over", "i will take it from here"
-    ]):
+    stop_takeover_phrases_priority = [
+        "stop takeover", "disengage takeover", "release control",
+        "i will take over", "i'll take over", "i take over",
+        "stop i will take over", "stop i'll take over", "stop i take over",
+        "stop playing", "stop chess", "stop bot", "stop the bot",
+        "cancel takeover", "abort takeover", "quit chess", "pause chess",
+        "i will take it from here", "i'll take it from here", "take back control",
+        "let me play", "let me take over", "stop typing", "stop moving",
+        "disengage", "abort game", "cancel chess"
+    ]
+    is_takeover_stop_priority = (
+        any(k in low_query for k in stop_takeover_phrases_priority)
+        or bool(re.search(r'\b(?:stop|cancel|disengage|halt|abort|quit|pause)\b.*(?:take\s*over|control|playing|chess|bot|engine|move|macro|typing)', low_query))
+    )
+    if not is_takeover_stop_priority:
+        try:
+            from pointbreak_takeover import takeover_engine
+            if takeover_engine.is_active and any(w in low_query.split() for w in ["stop", "cancel", "halt", "abort", "freeze", "quit", "pause", "hold"]):
+                is_takeover_stop_priority = True
+        except Exception:
+            pass
+
+    if is_takeover_stop_priority:
         try:
             from pointbreak_takeover import takeover_engine
             takeover_engine.stop_takeover(speak_fn=speak)

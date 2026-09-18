@@ -20,9 +20,9 @@ _CLIENT_LOCK = threading.Lock()
 _API_KEY = None
 
 DEFAULT_MODELS = [
-    "gemini-3.5-flash-lite",
-    "gemini-3.5-flash",
     "gemini-2.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.6-flash",
 ]
 
 def load_api_key() -> Optional[str]:

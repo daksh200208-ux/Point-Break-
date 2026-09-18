@@ -1,4 +1,9 @@
-from pointbreak_genai import query_generative_model, query_tars_vision
+from pointbreak_genai import (
+    query_generative_model,
+    query_tars_vision,
+    query_text as genai_query_text,
+    query_vision as genai_query_vision
+)
 from pointbreak_uia import uia_engine
 """
 Point Break 3.0 — Universal Autonomous Takeover Engine
@@ -68,7 +73,8 @@ try:
         get_square_center,
         load_chess_config,
         save_chess_config,
-        run_autonomous_chess_game
+        run_autonomous_chess_game,
+        request_chess_stop
     )
 except ImportError:
     chess = None
@@ -81,6 +87,7 @@ except ImportError:
     load_chess_config = None
     save_chess_config = None
     run_autonomous_chess_game = None
+    request_chess_stop = None
 
 from dotenv import load_dotenv
 JARVIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -90,14 +97,13 @@ try:
     import google.generativeai as genai
     api_key = os.getenv("GEMINI_API_KEY")
     if api_key:
-        genai.configure(api_key=api_key)
+        genai.configure(api_key=api_key, transport="rest")
 except ImportError:
     genai = None
 
 TAKEOVER_MODELS = [
+    "gemini-2.5-flash",
     "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-lite",
-    "gemini-3.5-flash",
     "gemini-3.6-flash"
 ]
 
@@ -210,52 +216,52 @@ class UniversalTakeoverEngine:
         return shot, img_path
 
     def query_vision(self, prompt: str, image_path: str, timeout: float = 12.0) -> Optional[str]:
-        """Queries Gemini Vision with shared model failover from jarvis or TAKEOVER_MODELS."""
-        # Try jarvis centralized model query if available
-        try:
-            from jarvis import query_generative_model
-            img = Image.open(image_path)
-            res = query_generative_model("gemini-3.5-flash-lite", [prompt, img], timeout=timeout)
-            if res:
-                return res.strip()
-        except Exception:
-            pass
-
-        if not genai or not image_path or not os.path.exists(image_path):
+        """Queries Gemini Vision with robust multi-model failover."""
+        if not image_path or not os.path.exists(image_path):
             return None
-        for m in TAKEOVER_MODELS:
-            try:
-                model = genai.GenerativeModel(m)
-                img = Image.open(image_path)
-                res = model.generate_content([prompt, img], request_options={"timeout": timeout})
-                if res and res.text:
-                    return res.text.strip()
-            except Exception as e:
-                print(f"[Takeover Vision] Model {m} failed: {e}")
-                continue
+        # Primary: Official google.genai Client from pointbreak_genai
+        try:
+            res = genai_query_vision(image_path, prompt, timeout=timeout)
+            if res and res.strip():
+                return res.strip()
+        except Exception as e:
+            print(f"[Takeover Vision GenAI Error]: {e}")
+
+        # Secondary: google.generativeai REST fallback
+        if genai:
+            for m in TAKEOVER_MODELS:
+                try:
+                    model = genai.GenerativeModel(m)
+                    img = Image.open(image_path)
+                    res = model.generate_content([prompt, img], request_options={"timeout": timeout})
+                    if res and res.text:
+                        return res.text.strip()
+                except Exception as e:
+                    print(f"[Takeover Vision] Model {m} failed: {e}")
+                    continue
         return None
 
     def query_text(self, prompt: str, timeout: float = 10.0) -> Optional[str]:
-        """Queries Gemini text model with centralized model failover."""
+        """Queries Gemini text model with robust multi-model failover."""
+        # Primary: Official google.genai Client from pointbreak_genai
         try:
-            from jarvis import query_generative_model
-            res = query_generative_model("gemini-3.5-flash-lite", prompt, timeout=timeout)
-            if res:
+            res = genai_query_text(prompt, timeout=timeout)
+            if res and res.strip():
                 return res.strip()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[Takeover Text GenAI Error]: {e}")
 
-        if not genai:
-            return None
-        for m in TAKEOVER_MODELS:
-            try:
-                model = genai.GenerativeModel(m)
-                res = model.generate_content(prompt, request_options={"timeout": timeout})
-                if res and res.text:
-                    return res.text.strip()
-            except Exception as e:
-                print(f"[Takeover Text] Model {m} failed: {e}")
-                continue
+        # Secondary: google.generativeai REST fallback
+        if genai:
+            for m in TAKEOVER_MODELS:
+                try:
+                    model = genai.GenerativeModel(m)
+                    res = model.generate_content(prompt, request_options={"timeout": timeout})
+                    if res and res.text:
+                        return res.text.strip()
+                except Exception as e:
+                    print(f"[Takeover Text] Model {m} failed: {e}")
+                    continue
         return None
 
     # ─────────────────────────────────────────────────────────────────
@@ -271,15 +277,22 @@ class UniversalTakeoverEngine:
             self.current_mode = "writing"
             self.stop_requested = False
 
+        if self.stop_requested:
+            with self._lock: self.is_active = False; self.current_mode = "idle"
+            return False
+
         if speak_fn:
             speak_fn("Analyzing your document, sir. Taking over writing...")
 
-        print("[Takeover] ✍️ Initiating Ghostwriter Writing & Coding Takeover...")
+        print("[Takeover] Initiating Ghostwriter Writing & Coding Takeover...")
 
         # 1. Grab current context from clipboard or screen
         existing_text = ""
         try:
             old_clip = pyperclip.paste()
+            if self.stop_requested:
+                with self._lock: self.is_active = False; self.current_mode = "idle"
+                return False
             pyautogui.hotkey("ctrl", "a")
             time.sleep(0.08)
             pyautogui.hotkey("ctrl", "c")
@@ -292,10 +305,22 @@ class UniversalTakeoverEngine:
         except Exception:
             pass
 
+        if self.stop_requested:
+            print("[Takeover] Operator cancelled writing takeover.")
+            with self._lock: self.is_active = False; self.current_mode = "idle"
+            return False
+
         # 2. Visual screen fallback if editor doesn't support Ctrl+A
         img_path = None
         if not existing_text or len(existing_text.strip()) < 5:
             _, img_path = self.capture_screenshot()
+
+        if self.stop_requested:
+            if img_path and os.path.exists(img_path):
+                try: os.remove(img_path)
+                except: pass
+            with self._lock: self.is_active = False; self.current_mode = "idle"
+            return False
 
         # 3. Prompt Gemini to synthesize continuation
         doc_type = "Code" if is_code else "Essay / Document / Notes"
@@ -326,10 +351,15 @@ CRITICAL INSTRUCTIONS:
         else:
             continuation = self.query_text(prompt)
 
+        if self.stop_requested:
+            print("[Takeover] Operator cancelled writing takeover after synthesis.")
+            with self._lock: self.is_active = False; self.current_mode = "idle"
+            return False
+
         if not continuation or len(continuation.strip()) < 2:
             if speak_fn:
                 speak_fn("Could not determine continuation context, sir.")
-            with self._lock: self.is_active = False
+            with self._lock: self.is_active = False; self.current_mode = "idle"
             return False
 
         clean_continuation = continuation.strip()
@@ -337,8 +367,13 @@ CRITICAL INSTRUCTIONS:
             clean_continuation = re.sub(r'^```[a-zA-Z]*\n', '', clean_continuation)
             clean_continuation = re.sub(r'\n```$', '', clean_continuation)
 
+        if self.stop_requested:
+            print("[Takeover] Operator cancelled writing takeover before typing.")
+            with self._lock: self.is_active = False; self.current_mode = "idle"
+            return False
+
         # 4. Autonomous typing execution
-        print(f"[Takeover] ⚡ Typing {len(clean_continuation)} characters into active cursor...")
+        print(f"[Takeover] Typing {len(clean_continuation)} characters into active cursor...")
         try:
             pyperclip.copy("\n" + clean_continuation)
             pyautogui.hotkey("ctrl", "v")
@@ -362,9 +397,9 @@ CRITICAL INSTRUCTIONS:
             verify_snippet = clean_continuation[:80].strip()
             if verify_snippet and verify_snippet in after_text:
                 paste_verified = True
-                print("[Takeover Verify] ✅ Continuation text confirmed in document.")
+                print("[Takeover Verify] Continuation text confirmed in document.")
             else:
-                print("[Takeover Verify] ⚠️ Continuation text not found in document after paste.")
+                print("[Takeover Verify] Continuation text not found in document after paste.")
         except Exception as verify_err:
             print(f"[Takeover Verify] Verification check error: {verify_err}")
             paste_verified = True  # Assume success if verification mechanism fails
@@ -463,18 +498,23 @@ CRITICAL INSTRUCTIONS:
         - Moves within 3.0 to 3.8 seconds after opponent moves.
         - Robust multi-theme board & highlight vision (Chess.com / Lichess).
         - True 3500+ ELO Stockfish 16 engine: zero blunders, zero dumb moves.
+        - Responsive stop/disengage check on command.
         """
         with self._lock:
             self.is_active = True
             self.current_mode = "chess"
             self.stop_requested = False
 
-        print("[Takeover] ♟️ Engaging High-Speed Silent Stockfish Grandmaster...")
+        print("[Takeover] Engaging High-Speed Silent Stockfish Grandmaster...")
 
         def _chess_loop():
             try:
                 if run_autonomous_chess_game:
-                    run_autonomous_chess_game(time_delay_target=3.2, single_move=single_move)
+                    run_autonomous_chess_game(
+                        time_delay_target=3.2,
+                        single_move=single_move,
+                        is_stop_requested=lambda: self.stop_requested or not self.is_active
+                    )
                 else:
                     print("[Takeover Chess Error]: run_autonomous_chess_game is unavailable.")
             except Exception as e:
@@ -502,11 +542,22 @@ CRITICAL INSTRUCTIONS:
             self.current_mode = "messaging"
             self.stop_requested = False
 
+        if self.stop_requested:
+            with self._lock: self.is_active = False; self.current_mode = "idle"
+            return False
+
         if speak_fn:
             speak_fn("Reading conversation on screen, sir. Drafting reply...")
 
-        print("[Takeover] 💬 Initiating Social Messaging Takeover...")
+        print("[Takeover] Initiating Social Messaging Takeover...")
         _, img_path = self.capture_screenshot()
+
+        if self.stop_requested:
+            if img_path and os.path.exists(img_path):
+                try: os.remove(img_path)
+                except: pass
+            with self._lock: self.is_active = False; self.current_mode = "idle"
+            return False
 
         try:
             screen_w, screen_h = pyautogui.size()
@@ -525,15 +576,20 @@ Output ONLY valid JSON:
 }}
 """
             res = self.query_vision(msg_prompt, img_path, timeout=12.0)
+            if self.stop_requested:
+                print("[Takeover] Messaging takeover aborted by stop request after vision query.")
+                with self._lock: self.is_active = False; self.current_mode = "idle"
+                return False
+
             if not res:
                 if speak_fn: speak_fn("Could not analyze chat interface, sir.")
-                with self._lock: self.is_active = False
+                with self._lock: self.is_active = False; self.current_mode = "idle"
                 return False
 
             match = re.search(r'\{.*\}', res, re.DOTALL)
             if not match:
                 if speak_fn: speak_fn("Failed to parse messaging parameters, sir.")
-                with self._lock: self.is_active = False
+                with self._lock: self.is_active = False; self.current_mode = "idle"
                 return False
 
             data = json.loads(match.group(0))
@@ -543,16 +599,28 @@ Output ONLY valid JSON:
 
             if not reply:
                 if speak_fn: speak_fn("Could not draft appropriate reply, sir.")
-                with self._lock: self.is_active = False
+                with self._lock: self.is_active = False; self.current_mode = "idle"
+                return False
+
+            if self.stop_requested:
+                print("[Takeover] Messaging takeover aborted by stop request before typing.")
+                with self._lock: self.is_active = False; self.current_mode = "idle"
                 return False
 
             cx = int(box_pct[0] * screen_w)
             cy = int(box_pct[1] * screen_h)
 
-            print(f"[Takeover] ✍️ Typing reply on {app} at ({cx}, {cy})...")
+            print(f"[Takeover] Typing reply on {app} at ({cx}, {cy})...")
             pyautogui.moveTo(cx, cy, duration=0.2)
+            if self.stop_requested:
+                with self._lock: self.is_active = False; self.current_mode = "idle"
+                return False
             pyautogui.click(cx, cy)
             time.sleep(0.1)
+
+            if self.stop_requested:
+                with self._lock: self.is_active = False; self.current_mode = "idle"
+                return False
 
             pyperclip.copy(reply)
             pyautogui.hotkey("ctrl", "v")
@@ -571,9 +639,9 @@ Output ONLY valid JSON:
                 verify_chunk = reply[:60].strip()
                 if verify_chunk and verify_chunk in input_text:
                     msg_verified = True
-                    print(f"[Takeover Verify] ✅ Reply text confirmed in {app} input box.")
+                    print(f"[Takeover Verify] Reply text confirmed in {app} input box.")
                 else:
-                    print(f"[Takeover Verify] ⚠️ Reply text not found in {app} input box after paste.")
+                    print(f"[Takeover Verify] Reply text not found in {app} input box after paste.")
                 # Deselect to avoid accidental deletion
                 pyautogui.press("end")
             except Exception as msg_verify_err:
@@ -594,7 +662,7 @@ Output ONLY valid JSON:
         except Exception as e:
             print(f"[Takeover Messaging Error]: {e}")
             if speak_fn: speak_fn(f"Messaging takeover encountered an error: {e}")
-            with self._lock: self.is_active = False
+            with self._lock: self.is_active = False; self.current_mode = "idle"
             return False
         finally:
             if img_path and os.path.exists(img_path):
@@ -1036,7 +1104,13 @@ RULES:
             self.is_active = False
             self.current_mode = "idle"
 
-        print("[Takeover] ⏹️ Autonomous Takeover Disengaged.")
+        if request_chess_stop:
+            try:
+                request_chess_stop()
+            except Exception as ce:
+                print(f"[Takeover] request_chess_stop error: {ce}")
+
+        print("[Takeover] Autonomous Takeover Disengaged. Control returned to operator.")
         if speak_fn:
             speak_fn("Takeover disengaged. Control returned to you, sir.")
 
