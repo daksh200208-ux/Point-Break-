@@ -72,7 +72,7 @@ CONFIG_FILE = os.path.join(CHESS_DIR, "chess_config.json")
 STOP_FLAG_FILE = os.path.join(CHESS_DIR, "chess_stop.flag")
 
 # Standard 1080p maximized browser on Chess.com:
-DEFAULT_BOARD_BBOX = (315, 175, 1095, 955)
+DEFAULT_BOARD_BBOX = (334, 283, 884, 833)
 
 
 def load_chess_config() -> Dict[str, Any]:
@@ -513,18 +513,12 @@ def get_square_center(
     return cx, cy
 
 
-def detect_opponent_move_fast(
+def get_highlighted_squares(
     curr_screen: Image.Image,
-    board: chess.Board,
     board_bbox: Tuple[int, int, int, int],
-    player_color: str = "white",
-    last_my_move: Optional[chess.Move] = None
-) -> Optional[chess.Move]:
-    """
-    Rapid move detection: checks all 64 squares for move highlights.
-    Filters out last_my_move highlights to prevent self-detection loops.
-    Matches against board.legal_moves.
-    """
+    player_color: str = "white"
+) -> set:
+    """Detects all squares that currently display a move highlight."""
     bx1, by1, bx2, by2 = board_bbox
     bw = bx2 - bx1
     bh = by2 - by1
@@ -533,17 +527,13 @@ def detect_opponent_move_fast(
 
     crop = np.array(curr_screen.crop((bx1, by1, bx2, by2)))
     if crop.size == 0:
-        return None
+        return set()
 
     highlighted_squares = set()
-    my_move_squares = set()
-    if last_my_move:
-        my_move_squares.add(chess.square_name(last_my_move.from_square))
-        my_move_squares.add(chess.square_name(last_my_move.to_square))
-
     sample_offsets = [
         (0.18, 0.18), (0.82, 0.18),
-        (0.18, 0.82), (0.82, 0.82)
+        (0.18, 0.82), (0.82, 0.82),
+        (0.50, 0.50)
     ]
 
     for rank in range(1, 9):
@@ -568,6 +558,136 @@ def detect_opponent_move_fast(
 
             if hl_count >= 2:
                 highlighted_squares.add(sq_name)
+
+    return highlighted_squares
+
+
+def sync_game_state_or_midgame(
+    curr_screen: Image.Image,
+    board_bbox: Tuple[int, int, int, int],
+    player_color: str = "white"
+) -> Tuple[chess.Board, Optional[chess.Move], bool]:
+    """
+    Synchronizes chessboard state when Point Break takes over fresh or mid-game.
+    1. Checks if an active Chess.com live game can be synced via callback API (TCN decode).
+    2. Detects move highlights currently on the board.
+    3. Reconstructs opening move history if mid-game is detected.
+    Returns: (board, last_opp_move, is_midgame)
+    """
+    # 1. Check highlighted squares on board right now
+    hl = get_highlighted_squares(curr_screen, board_bbox, player_color)
+    print(f"[*] Board Highlights Detected: {list(hl) if hl else 'None (Starting Position)'}")
+
+    if not hl:
+        return chess.Board(), None, False
+
+    # 2. Try Chess.com live game callback sync
+    try:
+        from chess_tcn import decode_tcn
+        game_id = None
+        try:
+            import pyperclip
+            cb = pyperclip.paste()
+            m = re.search(r'chess\.com/(?:game|play)/[a-zA-Z0-9_/]*?(\d{8,14})', cb)
+            if m:
+                game_id = m.group(1)
+        except Exception:
+            pass
+
+        if game_id:
+            import urllib.request
+            url = f"https://www.chess.com/callback/live/game/{game_id}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                g = data.get("game", {})
+                tcn_str = g.get("moveList", "")
+                if tcn_str:
+                    moves = decode_tcn(tcn_str)
+                    b = chess.Board()
+                    last_m = None
+                    for m in moves:
+                        uci_str = m["from"] + m["to"] + m.get("promotion", "")
+                        mv = chess.Move.from_uci(uci_str)
+                        b.push(mv)
+                        last_m = mv
+                    print(f"[+] Synced via Chess.com Live Callback! Total Plies: {len(b.move_stack)}")
+                    return b, last_m, True
+    except Exception:
+        pass
+
+    # 3. Vision-based Opening Sequence Reconstruction (Ply 1 to 5)
+    b0 = chess.Board()
+
+    # Case A: Ply 1 (White opened: e.g. 1. e4 or 1. d4)
+    for m1 in b0.legal_moves:
+        f1 = chess.square_name(m1.from_square)
+        t1 = chess.square_name(m1.to_square)
+        if {f1, t1} == hl:
+            b0.push(m1)
+            print(f"[+] Reconstructed White Opening Move: {m1.uci()}")
+            return b0, m1, True
+
+    # Case B: Ply 3 (White moved, Black moved, White moved again: e.g. 1. e4 d6 2. Bc4)
+    std_white_m1 = ["e2e4", "d2d4", "c2c4", "g1f3", "b1c3"]
+    std_black_m1 = ["d7d6", "e7e5", "c7c5", "e7e6", "g8f6", "b8c6", "g7g6", "c7c6", "d7d5"]
+
+    candidate_boards = []
+    for m1_str in std_white_m1:
+        m1 = chess.Move.from_uci(m1_str)
+        if m1 in b0.legal_moves:
+            b0.push(m1)
+            for m2_str in std_black_m1:
+                m2 = chess.Move.from_uci(m2_str)
+                if m2 in b0.legal_moves:
+                    b0.push(m2)
+                    for m3 in b0.legal_moves:
+                        f3 = chess.square_name(m3.from_square)
+                        t3 = chess.square_name(m3.to_square)
+                        if {f3, t3} == hl:
+                            b_copy = b0.copy()
+                            b_copy.push(m3)
+                            candidate_boards.append((b_copy, m3))
+                    b0.pop()
+            b0.pop()
+
+    if candidate_boards:
+        chosen_b, chosen_m = candidate_boards[0]
+        print(f"[+] Reconstructed Opening Sequence: {[m.uci() for m in chosen_b.move_stack]}")
+        return chosen_b, chosen_m, True
+
+    # Case C: Single Move Direct Match in legal moves
+    b_fresh = chess.Board()
+    for m in b_fresh.legal_moves:
+        f = chess.square_name(m.from_square)
+        t = chess.square_name(m.to_square)
+        if f in hl and t in hl:
+            b_fresh.push(m)
+            return b_fresh, m, True
+
+    return chess.Board(), None, False
+
+
+def detect_opponent_move_fast(
+    curr_screen: Image.Image,
+    board: chess.Board,
+    board_bbox: Tuple[int, int, int, int],
+    player_color: str = "white",
+    last_my_move: Optional[chess.Move] = None
+) -> Optional[chess.Move]:
+    """
+    Rapid move detection: checks all 64 squares for move highlights.
+    Filters out last_my_move highlights to prevent self-detection loops.
+    Matches against board.legal_moves.
+    """
+    highlighted_squares = get_highlighted_squares(curr_screen, board_bbox, player_color)
+    if not highlighted_squares:
+        return None
+
+    my_move_squares = set()
+    if last_my_move:
+        my_move_squares.add(chess.square_name(last_my_move.from_square))
+        my_move_squares.add(chess.square_name(last_my_move.to_square))
 
     # Ignore highlights that only match our previous move
     if highlighted_squares and my_move_squares:
@@ -794,63 +914,39 @@ def run_autonomous_chess_game(
         player_color = detect_player_color_from_board(shot, board_bbox)
         print(f"[+] Player Color (Auto-Detected): {player_color.upper()}")
 
-    board = chess.Board()
+    # 4. Synchronize Board State (Fresh Game OR Mid-Game Takeover)
+    board, last_detected_opp_move, is_midgame = sync_game_state_or_midgame(shot, board_bbox, player_color)
+    my_color = chess.WHITE if player_color == "white" else chess.BLACK
+    is_my_turn = (board.turn == my_color)
     last_my_move: Optional[chess.Move] = None
     moves_made = 0
 
-    print("\n[+] Controls: [Ctrl+C] Pause/Quit | Voice: 'Stop I will take over'")
-    print("-" * 70)
+    print(f"\n[+] Board State Initialized (Mid-game={is_midgame}, Moves on board={len(board.move_stack)})")
+    print(f"[+] Status: {'YOUR TURN (Executing immediate move)' if is_my_turn else 'OPPONENT TURN (Watching board)'}")
+    print(format_board_ascii(board, player_color))
 
-    # 4. IF WE ARE WHITE: Play Opening Move Instantly
-    if player_color == "white":
+    # 5. IF IT IS OUR TURN: Calculate & Play Move Immediately!
+    if is_my_turn and not board.is_game_over():
         if check_stop():
-            print("\n[Chess Titan] Operator disengaged prior to opening move.")
+            print("\n[Chess Titan] Operator disengaged prior to move.")
             return
-        print("\n[1] White to move. Calculating opening move...")
+        print(f"\n[+] Calculating best move for {player_color.upper()} with Stockfish 16 NNUE...")
         res = chess_engine.query_best_move(board, time_limit=0.25)
         if res and res.get("success"):
-            time.sleep(0.6)
+            time.sleep(1.0 if is_midgame else 0.6)
             if check_stop():
-                print("\n[Chess Titan] Opening move aborted by stop request.")
+                print("\n[Chess Titan] Move aborted by stop request.")
                 return
             my_move = res["move"]
-            execute_rapid_mouse_move(board_bbox, res["from_sq"], res["to_sq"], "white")
+            execute_rapid_mouse_move(board_bbox, res["from_sq"], res["to_sq"], player_color)
             board.push(my_move)
             last_my_move = my_move
             moves_made += 1
-            print(f"[Stockfish 16]: Opening Move -> {res['uci']} (Depth {res['depth']}, Eval: {res['score']:+.2f})")
+            print(f"[Stockfish 16]: Executed Move #{moves_made} -> {res['uci']} (Depth {res.get('depth', 16)}, Eval: {res.get('score', 0.0):+.2f})")
             print(format_board_ascii(board, player_color))
             if single_move:
                 print("\n[+] Single move executed. Exiting.")
                 return
-    else:
-        # Check if White has ALREADY played opening move
-        print("\n[*] Playing as BLACK. Checking if White already moved...")
-        curr_shot = capture_desktop_screenshot()
-        if curr_shot:
-            white_opener = detect_opponent_move_fast(curr_shot, board, board_bbox, "black")
-            if white_opener and white_opener in board.legal_moves:
-                print(f"[+] Detected White opening move: {white_opener.uci()}")
-                board.push(white_opener)
-                print(format_board_ascii(board, player_color))
-
-                # Counter immediately
-                if check_stop():
-                    print("\n[Chess Titan] Counter move aborted by stop request.")
-                    return
-                res = chess_engine.query_best_move(board, time_limit=0.25)
-                if res and res.get("success"):
-                    my_move = res["move"]
-                    time.sleep(1.2)
-                    if check_stop():
-                        print("\n[Chess Titan] Counter move aborted by stop request.")
-                        return
-                    execute_rapid_mouse_move(board_bbox, res["from_sq"], res["to_sq"], "black")
-                    board.push(my_move)
-                    last_my_move = my_move
-                    moves_made += 1
-                    print(f"[Stockfish 16]: Counter Move -> {my_move.uci()} (Eval: {res.get('score', 0):+.2f})")
-                    print(format_board_ascii(board, player_color))
 
     # 5. Autonomous Game Loop
     print("\n[*] Watching board for opponent moves...")
