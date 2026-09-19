@@ -1057,6 +1057,11 @@ def run_autonomous_chess_game(
         try:
             import win32api, win32con
             if win32api.GetAsyncKeyState(win32con.VK_ESCAPE) & 0x8000:
+                try:
+                    import winsound
+                    winsound.Beep(450, 100)
+                except Exception:
+                    pass
                 request_chess_stop()
                 return True
         except Exception:
@@ -1067,6 +1072,14 @@ def run_autonomous_chess_game(
             except Exception:
                 pass
         return False
+
+    # Audio cue: Grandmaster AI engaged
+    try:
+        import winsound
+        winsound.Beep(900, 70)
+        winsound.Beep(1300, 100)
+    except Exception:
+        pass
 
     print("\n" + "=" * 70)
     print("   POINT BREAK 3.0 -- AUTONOMOUS GRANDMASTER CHESS TITAN")
