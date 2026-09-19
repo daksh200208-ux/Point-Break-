@@ -498,9 +498,12 @@ def calibrate_board_interactively() -> Tuple[int, int, int, int]:
 
 def detect_player_color_from_board(screen_img: Image.Image, board_bbox: Tuple[int, int, int, int]) -> str:
     """
-    Determines player color by sampling piece brightness on bottom ranks vs top ranks.
-    Samples both major pieces (row 7 vs row 0) and pawn rows (row 6 vs row 1).
-    White pieces are bright (>160), Black pieces are dark (<95).
+    Determines player color by classifying pieces on the bottom ranks (player side) vs top ranks (opponent side).
+    On Chess.com / Lichess, the local player's pieces are ALWAYS at the bottom of the board:
+      - Physical rows 6 & 7: Player's pieces (Pawns on row 6, Back-rank pieces on row 7)
+      - Physical rows 0 & 1: Opponent's pieces (Back-rank pieces on row 0, Pawns on row 1)
+    Classifies pieces using template matching and CIE L*a*b* silhouette brightness.
+    Returns "black" if bottom ranks are dominated by black pieces, else "white".
     """
     bx1, by1, bx2, by2 = board_bbox
     bw = bx2 - bx1
@@ -512,14 +515,70 @@ def detect_player_color_from_board(screen_img: Image.Image, board_bbox: Tuple[in
     if crop.size == 0:
         return "white"
 
-    gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
+    target_size = (int(round(sq_w)), int(round(sq_h)))
+    templates = get_piece_templates(target_size)
+    cv_img = cv2.cvtColor(crop, cv2.COLOR_RGB2BGR)
 
+    bottom_white = 0
+    bottom_black = 0
+    top_white = 0
+    top_black = 0
+
+    # Scan bottom rows (physical rows 6 and 7: player's pawn rank and back rank)
+    for gr in [6, 7]:
+        for gc in range(8):
+            x1 = int(round(gc * sq_w))
+            y1 = int(round(gr * sq_h))
+            x2 = int(round((gc + 1) * sq_w))
+            y2 = int(round((gr + 1) * sq_h))
+            sq_crop = cv_img[y1:y2, x1:x2]
+            if sq_crop.shape[:2] != (target_size[1], target_size[0]):
+                sq_crop = cv2.resize(sq_crop, target_size)
+            p = classify_single_square(sq_crop, templates)
+            if p:
+                if p.isupper():
+                    bottom_white += 1
+                else:
+                    bottom_black += 1
+
+    # Scan top rows (physical rows 0 and 1: opponent's back rank and pawn rank)
+    for gr in [0, 1]:
+        for gc in range(8):
+            x1 = int(round(gc * sq_w))
+            y1 = int(round(gr * sq_h))
+            x2 = int(round((gc + 1) * sq_w))
+            y2 = int(round((gr + 1) * sq_h))
+            sq_crop = cv_img[y1:y2, x1:x2]
+            if sq_crop.shape[:2] != (target_size[1], target_size[0]):
+                sq_crop = cv2.resize(sq_crop, target_size)
+            p = classify_single_square(sq_crop, templates)
+            if p:
+                if p.isupper():
+                    top_white += 1
+                else:
+                    top_black += 1
+
+    print(f"[*] Player Color Detection: Bottom=[W:{bottom_white}, B:{bottom_black}] | Top=[W:{top_white}, B:{top_black}]")
+
+    # If bottom pieces were classified:
+    if bottom_black > bottom_white:
+        return "black"
+    elif bottom_white > bottom_black:
+        return "white"
+
+    # Secondary check: If bottom had no pieces (e.g. endgame where player's pieces moved forward),
+    # check opponent's pieces at the top:
+    if top_white > top_black:
+        return "black"  # Opponent is white, so user is black
+    elif top_black > top_white:
+        return "white"  # Opponent is black, so user is white
+
+    # Fallback to center-patch pixel brightness if piece classification was inconclusive:
+    gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
     bottom_samples = []
     top_samples = []
-
     rad = max(2, int(sq_w * 0.12))
     for col in range(8):
-        # Sample bottom ranks (row 7 major pieces, row 6 pawns)
         for r_idx in [7, 6]:
             bcx = int((col + 0.5) * sq_w)
             bcy = int((r_idx + 0.5) * sq_h)
@@ -527,8 +586,6 @@ def detect_player_color_from_board(screen_img: Image.Image, board_bbox: Tuple[in
                            max(0, bcx - rad):min(gray.shape[1], bcx + rad)]
             if patch_b.size > 0:
                 bottom_samples.append(float(np.median(patch_b)))
-
-        # Sample top ranks (row 0 major pieces, row 1 pawns)
         for r_idx in [0, 1]:
             tcx = int((col + 0.5) * sq_w)
             tcy = int((r_idx + 0.5) * sq_h)
@@ -540,11 +597,10 @@ def detect_player_color_from_board(screen_img: Image.Image, board_bbox: Tuple[in
     if bottom_samples and top_samples:
         avg_bottom = float(np.mean(bottom_samples))
         avg_top = float(np.mean(top_samples))
-
-        if avg_bottom > avg_top + 12:
-            return "white"
-        elif avg_top > avg_bottom + 12:
+        if avg_bottom < avg_top - 8:
             return "black"
+        elif avg_bottom > avg_top + 8:
+            return "white"
 
     return "white"
 
@@ -819,18 +875,43 @@ def sync_game_state_or_midgame(
     curr_screen: Image.Image,
     board_bbox: Tuple[int, int, int, int],
     player_color: str = "white"
-) -> Tuple[chess.Board, Optional[chess.Move], bool]:
+) -> Tuple[Optional[chess.Board], Optional[chess.Move], bool, str]:
     """
     Direct Visual FEN Synchronization:
     1. Scans all 64 squares using high-speed template matching (<280ms).
-    2. Validates board presence (must have both kings). Retries with standard 550x550 board if misaligned.
-    3. Determines active turn directly from board highlights or starting position.
-    4. Reconstructs legal chess.Board with full 3500+ ELO Stockfish compatibility.
+    2. Self-Healing Orientation Check: Validates that White pieces are not on Rank 8/7.
+       If inverted, auto-corrects player_color (White <-> Black) and re-scans immediately.
+    3. Validates board presence (must have both kings). Retries with standard 550x550 board if misaligned.
+    4. Determines active turn directly from board highlights or starting position.
+    5. Reconstructs legal chess.Board with full 3500+ ELO Stockfish compatibility.
     """
     t0 = time.time()
     fen_body = scan_board_fen(curr_screen, board_bbox, player_color)
     t_scan = (time.time() - t0) * 1000
     print(f"[+] Visual FEN Scanned in {t_scan:.1f}ms: {fen_body}")
+
+    # Self-healing orientation check:
+    # On Chess.com / Lichess, the local player's pieces are always at the bottom.
+    # In FEN notation:
+    # - Rank 8 and Rank 7 are ranks[0] and ranks[1] (Black's home side)
+    # - Rank 2 and Rank 1 are ranks[6] and ranks[7] (White's home side)
+    # If the board was scanned inverted: ranks 8 & 7 contain White pieces and ranks 1 & 2 contain Black pieces.
+    ranks = fen_body.split('/')
+    if len(ranks) == 8:
+        top_ranks = ranks[0] + ranks[1]
+        bottom_ranks = ranks[6] + ranks[7]
+        top_white = sum(1 for c in top_ranks if c.isupper())
+        top_black = sum(1 for c in top_ranks if c.islower())
+        bot_white = sum(1 for c in bottom_ranks if c.isupper())
+        bot_black = sum(1 for c in bottom_ranks if c.islower())
+
+        if top_white > top_black + 4 and bot_black > bot_white + 4:
+            inverted_color = "black" if player_color.lower() == "white" else "white"
+            print(f"[!] Board Orientation Inversion Detected! (Top W:{top_white}/B:{top_black}, Bottom W:{bot_white}/B:{bot_black})")
+            print(f"[*] Auto-correcting player color: {player_color.upper()} -> {inverted_color.upper()}")
+            player_color = inverted_color
+            fen_body = scan_board_fen(curr_screen, board_bbox, player_color)
+            print(f"[+] Re-scanned Corrected FEN: {fen_body}")
 
     # Sanity check: count pieces and verify kings
     pieces_found = [c for c in fen_body if c.isalpha()]
@@ -849,7 +930,7 @@ def sync_game_state_or_midgame(
 
     if len(pieces_found) < 2 or not (has_white_king and has_black_king):
         print("[!] Board scan unconfirmed: Valid board not yet visible.")
-        return None, None, False
+        return None, None, False, player_color
 
     hl = get_highlighted_squares(curr_screen, board_bbox, player_color)
     is_midgame = (fen_body != "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
@@ -892,15 +973,17 @@ def sync_game_state_or_midgame(
 
     try:
         board = chess.Board(full_fen)
+        board.player_color = player_color
         print(f"[+] Direct Board Ground Truth Established! Turn={'WHITE' if board.turn == chess.WHITE else 'BLACK'}")
-        return board, None, is_midgame
+        return board, None, is_midgame, player_color
     except Exception as e:
         print(f"[!] FEN Parse fallback: {e}")
         try:
             board = chess.Board(f"{fen_body} {turn} - - 0 1")
-            return board, None, is_midgame
+            board.player_color = player_color
+            return board, None, is_midgame, player_color
         except Exception:
-            return None, None, False
+            return None, None, False, player_color
 
 
 def detect_opponent_move_fast(
@@ -1185,7 +1268,10 @@ def run_autonomous_chess_game(
     last_detected_opp_move = None
     is_midgame = False
     for attempt in range(5):
-        b_res, last_detected_opp_move, is_midgame = sync_game_state_or_midgame(shot, board_bbox, player_color)
+        b_res, last_detected_opp_move, is_midgame, detected_color = sync_game_state_or_midgame(shot, board_bbox, player_color)
+        if detected_color != player_color:
+            player_color = detected_color
+            print(f"[+] Player Color Synchronized from Visual Board: {player_color.upper()}")
         if b_res is not None and b_res.king(chess.WHITE) is not None and b_res.king(chess.BLACK) is not None:
             board = b_res
             break
@@ -1201,6 +1287,7 @@ def run_autonomous_chess_game(
         is_midgame = False
 
     my_color = chess.WHITE if player_color == "white" else chess.BLACK
+    save_chess_config({"board_bbox": list(board_bbox), "player_color": player_color})
     is_my_turn = (board.turn == my_color)
     last_my_move: Optional[chess.Move] = None
     moves_made = 0
@@ -1300,10 +1387,14 @@ def run_autonomous_chess_game(
 
                     if hl and not hl.issubset(my_move_squares):
                         # Visual change detected! Rescan ground-truth FEN directly
-                        new_board, _, confirmed = sync_game_state_or_midgame(curr_shot, board_bbox, player_color)
+                        new_board, _, confirmed, detected_color = sync_game_state_or_midgame(curr_shot, board_bbox, player_color)
+                        if detected_color != player_color:
+                            player_color = detected_color
+                            my_color = chess.WHITE if player_color == "white" else chess.BLACK
                         if confirmed and new_board is not None and new_board.king(chess.WHITE) is not None and new_board.king(chess.BLACK) is not None:
                             board = new_board
-                            print(f"\n[Visual FEN Trigger]: Ground-truth board resynced! Turn={'OURS' if board.turn == my_color else 'OPPONENT'}")
+                            my_color = chess.WHITE if player_color == "white" else chess.BLACK
+                            print(f"\n[Visual FEN Trigger]: Ground-truth board resynced! Turn={'OURS' if board.turn == my_color else 'OPPONENT'} (Player={player_color.upper()})")
                             print(format_board_ascii(board, player_color))
                             continue
 
