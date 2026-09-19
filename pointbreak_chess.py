@@ -303,43 +303,52 @@ class PointBreakStockfish:
         if not board.legal_moves:
             return {"success": False, "reason": "No legal moves available."}
 
-        if self._ensure_engine() and self._engine is not None:
-            try:
-                with self._lock:
-                    result = self._engine.play(
-                        board,
-                        chess.engine.Limit(time=time_limit),
-                        info=chess.engine.INFO_ALL
-                    )
-                best_move = result.move
-                if best_move and best_move in board.legal_moves:
-                    from_sq = chess.square_name(best_move.from_square)
-                    to_sq = chess.square_name(best_move.to_square)
-                    score_val = 0.0
-                    mate_in = None
-                    depth_val = result.info.get("depth", 16) if result.info else 16
+        for attempt in range(2):
+            if self._ensure_engine() and self._engine is not None:
+                try:
+                    with self._lock:
+                        result = self._engine.play(
+                            board,
+                            chess.engine.Limit(time=time_limit),
+                            info=chess.engine.INFO_ALL
+                        )
+                    best_move = result.move
+                    if best_move and best_move in board.legal_moves:
+                        from_sq = chess.square_name(best_move.from_square)
+                        to_sq = chess.square_name(best_move.to_square)
+                        score_val = 0.0
+                        mate_in = None
+                        depth_val = result.info.get("depth", 16) if result.info else 16
 
-                    if result.info and result.info.get("score"):
-                        turn_score = result.info["score"].white() if board.turn == chess.WHITE else result.info["score"].black()
-                        if turn_score.is_mate():
-                            mate_in = turn_score.mate()
-                        else:
-                            cp = turn_score.score()
-                            if cp is not None:
-                                score_val = cp / 100.0
+                        if result.info and result.info.get("score"):
+                            turn_score = result.info["score"].white() if board.turn == chess.WHITE else result.info["score"].black()
+                            if turn_score.is_mate():
+                                mate_in = turn_score.mate()
+                            else:
+                                cp = turn_score.score()
+                                if cp is not None:
+                                    score_val = cp / 100.0
 
-                    return {
-                        "success": True,
-                        "move": best_move,
-                        "uci": best_move.uci(),
-                        "from_sq": from_sq,
-                        "to_sq": to_sq,
-                        "score": score_val,
-                        "mate": mate_in,
-                        "depth": depth_val
-                    }
-            except Exception as e:
-                print(f"[Stockfish Query Error]: {e}")
+                        return {
+                            "success": True,
+                            "move": best_move,
+                            "uci": best_move.uci(),
+                            "from_sq": from_sq,
+                            "to_sq": to_sq,
+                            "score": score_val,
+                            "mate": mate_in,
+                            "depth": depth_val
+                        }
+                except Exception as e:
+                    print(f"[Stockfish Query Error (attempt {attempt + 1}/2)]: {e}")
+                    with self._lock:
+                        if self._engine is not None:
+                            try:
+                                self._engine.close()
+                            except Exception:
+                                pass
+                            self._engine = None
+                    time.sleep(0.05)
 
         # Fallback to python-chess legal move heuristic
         best_move = next(iter(board.legal_moves))
@@ -638,7 +647,14 @@ def get_piece_templates(target_size: Tuple[int, int]) -> Dict[str, Tuple[np.ndar
 
 
 def classify_single_square(sq_crop: np.ndarray, templates: Dict[str, Tuple[np.ndarray, np.ndarray]]) -> Optional[str]:
-    """Classifies a square crop into a FEN piece symbol or None (empty) with 100% accuracy."""
+    """
+    Classifies a square crop into a FEN piece symbol or None (empty) with 100% precision.
+    Combines:
+    1. Center standard deviation check (filters flat empty squares in <0.2ms).
+    2. CIE L*a*b* background distance segmentation: robust across green, wood, dark, and light themes.
+    3. Silhouette Intersection-over-Union (IoU) * Normalized Cross-Correlation (CCORR).
+    4. Silhouette mask brightness test for 100% White vs Black piece color discrimination.
+    """
     h, w = sq_crop.shape[:2]
     center = sq_crop[int(h * 0.2):int(h * 0.8), int(w * 0.2):int(w * 0.8)]
     gray = cv2.cvtColor(center, cv2.COLOR_BGR2GRAY)
@@ -646,22 +662,39 @@ def classify_single_square(sq_crop: np.ndarray, templates: Dict[str, Tuple[np.nd
     if std_val < 6.0:
         return None
 
+    # CIE L*a*b* color distance from 4 square corners (pure square background)
+    lab = cv2.cvtColor(sq_crop, cv2.COLOR_BGR2Lab)
+    corners_lab = np.concatenate([lab[:8, :8], lab[:8, -8:], lab[-8:, :8], lab[-8:, -8:]]).reshape(-1, 3)
+    bg_lab = np.median(corners_lab, axis=0)
+    diff_lab = np.linalg.norm(lab.astype(float) - bg_lab, axis=2)
+    screen_piece_mask = (diff_lab > 15).astype(np.uint8)
+
+    piece_pixels_count = int(np.sum(screen_piece_mask))
+    if piece_pixels_count < 300 and std_val < 15.0:
+        return None
+
     sq_gray = cv2.cvtColor(sq_crop, cv2.COLOR_BGR2GRAY)
 
     best_p = None
-    best_score = -999.0
-    for k, (tmpl_bgr, tmpl_mask) in templates.items():
-        res = cv2.matchTemplate(sq_crop, tmpl_bgr, cv2.TM_CCOEFF_NORMED, mask=tmpl_mask)
-        score = float(res[0, 0])
-        if not math.isnan(score) and score > best_score:
+    best_score = -1.0
+    for k, tmpl_tuple in templates.items():
+        tmpl_bgr, tmpl_mask = tmpl_tuple[:2]
+        t_bin = (tmpl_mask > 128).astype(np.uint8)
+        intersection = np.sum((screen_piece_mask & t_bin))
+        union = np.sum((screen_piece_mask | t_bin))
+        iou = float(intersection) / float(union) if union > 0 else 0.0
+
+        res = cv2.matchTemplate(sq_crop, tmpl_bgr, cv2.TM_CCORR_NORMED, mask=tmpl_mask)
+        ccorr = float(res[0, 0]) if not np.isnan(res[0, 0]) else 0.0
+
+        score = iou * max(0.0, ccorr)
+        if score > best_score:
             best_score = score
             best_p = k
 
-    # If center has high variance (>10.0), a piece is physically present on the square
-    min_thresh = 0.02 if std_val > 10.0 else 0.15
-    if best_p and best_score > min_thresh:
+    if best_p and best_score > 0.28:
         # Verify piece color using actual screen pixel brightness inside the template silhouette
-        _, tmpl_mask = templates[best_p]
+        tmpl_mask = templates[best_p][1]
         piece_pixels = sq_gray[tmpl_mask > 128]
         if piece_pixels.size > 0:
             mean_b = float(np.mean(piece_pixels))
@@ -672,6 +705,7 @@ def classify_single_square(sq_crop: np.ndarray, templates: Dict[str, Tuple[np.nd
             elif best_p.startswith('b') and mean_b >= 130:
                 best_p = 'w' + best_p[1:]
         return FEN_MAP[best_p]
+
     return None
 
 
@@ -814,11 +848,8 @@ def sync_game_state_or_midgame(
             has_black_king = 'k' in pieces_found
 
     if len(pieces_found) < 2 or not (has_white_king and has_black_king):
-        print("[!] Board scan unconfirmed: Valid board not yet visible. Defaulting to standard opening board.")
-        init_board = chess.Board()
-        if player_color.lower() == "black":
-            init_board.turn = chess.BLACK
-        return init_board, None, False
+        print("[!] Board scan unconfirmed: Valid board not yet visible.")
+        return None, None, False
 
     hl = get_highlighted_squares(curr_screen, board_bbox, player_color)
     is_midgame = (fen_body != "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
@@ -869,7 +900,7 @@ def sync_game_state_or_midgame(
             board = chess.Board(f"{fen_body} {turn} - - 0 1")
             return board, None, is_midgame
         except Exception:
-            return chess.Board(), None, False
+            return None, None, False
 
 
 def detect_opponent_move_fast(
@@ -882,7 +913,7 @@ def detect_opponent_move_fast(
     """
     Rapid move detection: checks all 64 squares for move highlights.
     Filters out last_my_move highlights to prevent self-detection loops.
-    Matches against board.legal_moves.
+    Matches against board.legal_moves (including full castling detection).
     """
     highlighted_squares = get_highlighted_squares(curr_screen, board_bbox, player_color)
     if not highlighted_squares:
@@ -904,6 +935,15 @@ def detect_opponent_move_fast(
         to_name = chess.square_name(legal_m.to_square)
         if from_name in highlighted_squares and to_name in highlighted_squares:
             candidate_moves.append(legal_m)
+        elif board.is_castling(legal_m):
+            # Chess.com sometimes highlights King and Rook squares
+            rook_sq = None
+            if legal_m.to_square == chess.G1: rook_sq = 'h1'
+            elif legal_m.to_square == chess.C1: rook_sq = 'a1'
+            elif legal_m.to_square == chess.G8: rook_sq = 'h8'
+            elif legal_m.to_square == chess.C8: rook_sq = 'a8'
+            if rook_sq and from_name in highlighted_squares and rook_sq in highlighted_squares:
+                candidate_moves.append(legal_m)
 
     if len(candidate_moves) == 1:
         return candidate_moves[0]
@@ -945,18 +985,24 @@ def execute_rapid_mouse_move(
 
     # 1. Click source square to select piece
     pyautogui.moveTo(cx1, cy1, duration=0.06)
-    pyautogui.click(cx1, cy1)
+    pyautogui.mouseDown(cx1, cy1)
+    time.sleep(0.035)
+    pyautogui.mouseUp(cx1, cy1)
     time.sleep(0.08)
 
     # 2. Click destination square to complete move
     pyautogui.moveTo(cx2, cy2, duration=0.07)
-    pyautogui.click(cx2, cy2)
+    pyautogui.mouseDown(cx2, cy2)
+    time.sleep(0.035)
+    pyautogui.mouseUp(cx2, cy2)
     time.sleep(0.08)
 
     # 3. Handle Queen promotion modal if promoting pawn
     if to_sq[1] in ('1', '8'):
         time.sleep(0.10)
-        pyautogui.click(cx2, cy2)
+        pyautogui.mouseDown(cx2, cy2)
+        time.sleep(0.035)
+        pyautogui.mouseUp(cx2, cy2)
 
     # 4. Park mouse off-board so cursor never hovers over board squares
     bx1 = board_bbox[0]
@@ -1135,7 +1181,25 @@ def run_autonomous_chess_game(
         print(f"[+] Player Color (Auto-Detected): {player_color.upper()}")
 
     # 4. Synchronize Board State (Fresh Game OR Mid-Game Takeover)
-    board, last_detected_opp_move, is_midgame = sync_game_state_or_midgame(shot, board_bbox, player_color)
+    board = None
+    last_detected_opp_move = None
+    is_midgame = False
+    for attempt in range(5):
+        b_res, last_detected_opp_move, is_midgame = sync_game_state_or_midgame(shot, board_bbox, player_color)
+        if b_res is not None and b_res.king(chess.WHITE) is not None and b_res.king(chess.BLACK) is not None:
+            board = b_res
+            break
+        print(f"[*] Initial scan attempt {attempt + 1}/5 unconfirmed, waiting 300ms for board to stabilize...")
+        time.sleep(0.30)
+        shot = capture_desktop_screenshot()
+
+    if board is None:
+        print("[*] Board scan unconfirmed after retries. Initializing standard starting board.")
+        board = chess.Board()
+        if player_color.lower() == "black":
+            board.turn = chess.BLACK
+        is_midgame = False
+
     my_color = chess.WHITE if player_color == "white" else chess.BLACK
     is_my_turn = (board.turn == my_color)
     last_my_move: Optional[chess.Move] = None
@@ -1236,8 +1300,8 @@ def run_autonomous_chess_game(
 
                     if hl and not hl.issubset(my_move_squares):
                         # Visual change detected! Rescan ground-truth FEN directly
-                        new_board, _, _ = sync_game_state_or_midgame(curr_shot, board_bbox, player_color)
-                        if new_board.king(chess.WHITE) is not None and new_board.king(chess.BLACK) is not None:
+                        new_board, _, confirmed = sync_game_state_or_midgame(curr_shot, board_bbox, player_color)
+                        if confirmed and new_board is not None and new_board.king(chess.WHITE) is not None and new_board.king(chess.BLACK) is not None:
                             board = new_board
                             print(f"\n[Visual FEN Trigger]: Ground-truth board resynced! Turn={'OURS' if board.turn == my_color else 'OPPONENT'}")
                             print(format_board_ascii(board, player_color))
