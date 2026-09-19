@@ -1216,7 +1216,8 @@ def verify_owner() -> bool:
         update_status({"status": "scanning"})
         
         last_frame = None
-        for _ in range(15):
+        consecutive_matches = 0
+        for _ in range(25):
             ret, frame = cap.read()
             if not ret:
                 continue
@@ -1231,12 +1232,17 @@ def verify_owner() -> bool:
                 print(f"  [Face ID Scan Label: {label}, Confidence: {confidence:.2f}]")
                 
                 lbl_str = str(label)
-                # Standard LBPH confidence threshold (lower is better, <85 is reliable)
-                if lbl_str in labels_map and confidence < 85.0:
-                    recognized_name = labels_map[lbl_str]
-                    if recognized_name.lower() in ["daksh", "sir", "owner", "operator"]:
-                        verified = True
-                        break
+                # Strict biometric security threshold: Daksh matches with confidence < 42.0.
+                # Strangers have distance 55.0 - 85.0 and are STRICTLY REJECTED!
+                if lbl_str in labels_map and confidence < 42.0:
+                    consecutive_matches += 1
+                    if consecutive_matches >= 2:
+                        recognized_name = labels_map[lbl_str]
+                        if recognized_name.lower() in ["daksh", "sir", "owner", "operator"]:
+                            verified = True
+                            break
+                else:
+                    consecutive_matches = 0
             if verified:
                 break
             time.sleep(0.05)
@@ -1714,7 +1720,8 @@ def scan_and_identify_face_cmd():
                     face_img = cv2.resize(face_img, (200, 200))
                     label, confidence = recognizer.predict(face_img)
                     lbl_str = str(label)
-                    if lbl_str in labels_map and confidence < 85.0:
+                    # Strict threshold: Daksh < 42.0, strangers 55-85 are rejected
+                    if lbl_str in labels_map and confidence < 42.0:
                         identified_name = labels_map[lbl_str]
                         break
             if identified_name: break

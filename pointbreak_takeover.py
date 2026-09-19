@@ -483,7 +483,7 @@ CRITICAL INSTRUCTIONS:
                 if run_autonomous_chess_game:
                     run_autonomous_chess_game(
                         forced_color=forced_color,
-                        time_delay_target=3.2,
+                        time_delay_target=1.8,
                         single_move=single_move,
                         is_stop_requested=lambda: self.stop_requested or not self.is_active
                     )

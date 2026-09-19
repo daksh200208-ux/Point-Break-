@@ -86,7 +86,10 @@ def load_chess_config() -> Dict[str, Any]:
                 data = json.load(f)
                 bbox = data.get("board_bbox")
                 if bbox and len(bbox) == 4 and all(isinstance(v, (int, float)) for v in bbox):
-                    if (bbox[2] - bbox[0]) > 250 and (bbox[3] - bbox[1]) > 250:
+                    bw = bbox[2] - bbox[0]
+                    bh = bbox[3] - bbox[1]
+                    # Strict validation: Must be a true square (aspect ratio between 0.96 and 1.04)
+                    if 300 <= bw <= 1000 and 300 <= bh <= 1000 and 0.96 <= (bw / bh) <= 1.04:
                         return data
         except Exception:
             pass
@@ -98,6 +101,12 @@ def load_chess_config() -> Dict[str, Any]:
 
 def save_chess_config(config: Dict[str, Any]):
     try:
+        bbox = config.get("board_bbox")
+        if bbox and len(bbox) == 4:
+            bw = bbox[2] - bbox[0]
+            bh = bbox[3] - bbox[1]
+            if not (0.96 <= (bw / bh) <= 1.04):
+                return  # Never save distorted non-square bounding boxes!
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
     except Exception:
@@ -373,9 +382,10 @@ def detect_chessboard_bounds(screen_img: Image.Image) -> Tuple[int, int, int, in
         if area > 120000:
             x, y, bw, bh = cv2.boundingRect(cnt)
             ratio = float(bw) / float(bh) if bh > 0 else 0
-            if 0.92 <= ratio <= 1.08 and area > max_area:
+            if 0.94 <= ratio <= 1.06 and area > max_area:
+                side = round((bw + bh) / 2)
                 max_area = area
-                best_bbox = (x, y, x + bw, y + bh)
+                best_bbox = (x, y, x + side, y + side)
 
     if best_bbox:
         save_chess_config({"board_bbox": list(best_bbox)})
@@ -393,9 +403,10 @@ def detect_chessboard_bounds(screen_img: Image.Image) -> Tuple[int, int, int, in
         if area > 100000:
             x, y, bw, bh = cv2.boundingRect(cnt)
             ratio = float(bw) / float(bh) if bh > 0 else 0
-            if 0.90 <= ratio <= 1.10 and area > max_area:
+            if 0.94 <= ratio <= 1.06 and area > max_area:
+                side = round((bw + bh) / 2)
                 max_area = area
-                best_bbox = (x, y, x + bw, y + bh)
+                best_bbox = (x, y, x + side, y + side)
 
     if best_bbox:
         save_chess_config({"board_bbox": list(best_bbox)})
@@ -406,7 +417,9 @@ def detect_chessboard_bounds(screen_img: Image.Image) -> Tuple[int, int, int, in
     bbox = cfg.get("board_bbox")
     if bbox and len(bbox) == 4:
         bx1, by1, bx2, by2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
-        if (bx2 - bx1) > 300 and (by2 - by1) > 300:
+        bw = bx2 - bx1
+        bh = by2 - by1
+        if 300 <= bw <= 1000 and 300 <= bh <= 1000 and 0.96 <= (bw / bh) <= 1.04:
             return (bx1, by1, bx2, by2)
 
     return DEFAULT_BOARD_BBOX
@@ -601,7 +614,7 @@ def classify_single_square(sq_crop: np.ndarray, templates: Dict[str, Tuple[np.nd
     h, w = sq_crop.shape[:2]
     center = sq_crop[int(h * 0.2):int(h * 0.8), int(w * 0.2):int(w * 0.8)]
     gray = cv2.cvtColor(center, cv2.COLOR_BGR2GRAY)
-    if np.std(gray) < 10.0:
+    if np.std(gray) < 8.0:
         return None
 
     best_p = None
@@ -610,13 +623,13 @@ def classify_single_square(sq_crop: np.ndarray, templates: Dict[str, Tuple[np.nd
         res = cv2.matchTemplate(sq_crop, tmpl_bgr, cv2.TM_CCOEFF_NORMED, mask=tmpl_mask)
         score = float(res[0, 0])
         if not math.isnan(score):
-            if score > 0.80:
+            if score > 0.75:
                 return FEN_MAP[k]
             if score > best_score:
                 best_score = score
                 best_p = k
 
-    if best_p and best_score > 0.35:
+    if best_p and best_score > 0.22:
         return FEN_MAP[best_p]
     return None
 
@@ -735,13 +748,33 @@ def sync_game_state_or_midgame(
     """
     Direct Visual FEN Synchronization:
     1. Scans all 64 squares using high-speed template matching (<280ms).
-    2. Determines active turn directly from board highlights or starting position.
-    3. Reconstructs legal chess.Board with full 3500+ ELO Stockfish compatibility.
+    2. Validates board presence (must have both kings). Retries with standard 550x550 board if misaligned.
+    3. Determines active turn directly from board highlights or starting position.
+    4. Reconstructs legal chess.Board with full 3500+ ELO Stockfish compatibility.
     """
     t0 = time.time()
     fen_body = scan_board_fen(curr_screen, board_bbox, player_color)
     t_scan = (time.time() - t0) * 1000
     print(f"[+] Visual FEN Scanned in {t_scan:.1f}ms: {fen_body}")
+
+    # Sanity check: count pieces and verify kings
+    pieces_found = [c for c in fen_body if c.isalpha()]
+    has_white_king = 'K' in pieces_found
+    has_black_king = 'k' in pieces_found
+
+    if len(pieces_found) < 2 or not (has_white_king and has_black_king):
+        print(f"[!] Warning: Board scan found only {len(pieces_found)} pieces (White King={has_white_king}, Black King={has_black_king}).")
+        if board_bbox != DEFAULT_BOARD_BBOX:
+            print(f"[*] Re-aligning with calibrated 550x550 board at {DEFAULT_BOARD_BBOX}...")
+            board_bbox = DEFAULT_BOARD_BBOX
+            fen_body = scan_board_fen(curr_screen, board_bbox, player_color)
+            pieces_found = [c for c in fen_body if c.isalpha()]
+            has_white_king = 'K' in pieces_found
+            has_black_king = 'k' in pieces_found
+
+    if len(pieces_found) < 2 or not (has_white_king and has_black_king):
+        print("[!] Board scan unconfirmed: Valid board not yet visible. Defaulting to standard opening board.")
+        return chess.Board(), None, False
 
     hl = get_highlighted_squares(curr_screen, board_bbox, player_color)
     is_midgame = (fen_body != "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
@@ -1055,31 +1088,8 @@ def run_autonomous_chess_game(
     print(f"[+] Status: {'YOUR TURN (Executing immediate move)' if is_my_turn else 'OPPONENT TURN (Watching board)'}")
     print(format_board_ascii(board, player_color))
 
-    # 5. IF IT IS OUR TURN: Calculate & Play Move Immediately!
-    if is_my_turn and not board.is_game_over():
-        if check_stop():
-            print("\n[Chess Titan] Operator disengaged prior to move.")
-            return
-        print(f"\n[+] Calculating best move for {player_color.upper()} with Stockfish 16 NNUE...")
-        res = chess_engine.query_best_move(board, time_limit=0.25)
-        if res and res.get("success"):
-            time.sleep(1.0 if is_midgame else 0.6)
-            if check_stop():
-                print("\n[Chess Titan] Move aborted by stop request.")
-                return
-            my_move = res["move"]
-            execute_rapid_mouse_move(board_bbox, res["from_sq"], res["to_sq"], player_color)
-            board.push(my_move)
-            last_my_move = my_move
-            moves_made += 1
-            print(f"[Stockfish 16]: Executed Move #{moves_made} -> {res['uci']} (Depth {res.get('depth', 16)}, Eval: {res.get('score', 0.0):+.2f})")
-            print(format_board_ascii(board, player_color))
-            if single_move:
-                print("\n[+] Single move executed. Exiting.")
-                return
-
     # 5. Autonomous Game Loop
-    print("\n[*] Watching board for opponent moves...")
+    print("\n[*] Point Break Autonomous Grandmaster Chess Active...")
     scan_count = 0
     last_heartbeat_time = time.time()
 
@@ -1089,28 +1099,78 @@ def run_autonomous_chess_game(
                 print("\n[Chess Titan] Operator disengaged. Exiting autonomous loop.")
                 break
 
-            if board.is_game_over():
-                outcome = board.outcome()
-                print("\n" + "=" * 70)
-                print(f"   MATCH CONCLUDED! Result: {outcome.result() if outcome else 'Finished'}")
-                print(f"   Winner: {outcome.winner if outcome else 'Checkmate'}")
-                print("=" * 70)
-                break
+            # Legitimate game over check (kings must exist)
+            white_king = board.king(chess.WHITE)
+            black_king = board.king(chess.BLACK)
+            if white_king is not None and black_king is not None and len(board.piece_map()) >= 2:
+                if board.is_game_over():
+                    outcome = board.outcome()
+                    print("\n" + "=" * 70)
+                    print(f"   MATCH CONCLUDED! Result: {outcome.result() if outcome else 'Finished'}")
+                    print(f"   Winner: {outcome.winner if outcome else 'Checkmate'}")
+                    print("=" * 70)
+                    break
 
+            # ── STATE 1: IT IS OUR TURN -> EXECUTE MOVE IMMEDIATELY ──
+            if board.turn == my_color and not board.is_game_over():
+                if check_stop():
+                    print("\n[Chess Titan] Operator disengaged prior to move.")
+                    break
+
+                print(f"\n[+] Calculating best move for {player_color.upper()} with Stockfish 16 NNUE...")
+                t_calc_start = time.time()
+                res = chess_engine.query_best_move(board, time_limit=0.25)
+                if res and res.get("success"):
+                    my_move = res["move"]
+                    eval_str = f"Mate in {res['mate']}" if res.get('mate') else f"{res.get('score', 0):+.2f}"
+                    print(f"[Stockfish 16 NNUE]: Depth {res.get('depth', 16)} | Eval: {eval_str} | Playing: {my_move.uci()}")
+
+                    # Human-like natural pacing (0.6s to 1.8s)
+                    target_delay = random.uniform(max(0.4, time_delay_target - 0.2), time_delay_target + 0.3)
+                    elapsed = time.time() - t_calc_start
+                    remaining_wait = max(0.05, target_delay - elapsed)
+                    t_wait_start = time.time()
+                    while time.time() - t_wait_start < remaining_wait:
+                        if check_stop():
+                            print("\n[Chess Titan] Move aborted by operator stop request during timing delay.")
+                            return
+                        time.sleep(0.04)
+
+                    if check_stop():
+                        print("\n[Chess Titan] Move aborted by operator stop request before click.")
+                        return
+
+                    # Execute move with rapid 2-click mouse method
+                    execute_rapid_mouse_move(board_bbox, res["from_sq"], res["to_sq"], player_color)
+                    board.push(my_move)
+                    last_my_move = my_move
+                    moves_made += 1
+                    total_time = time.time() - t_calc_start
+                    print(f"[Executed Move #{moves_made}]: {my_move.uci()} in {total_time:.2f}s total")
+                    print(format_board_ascii(board, player_color))
+
+                    if single_move:
+                        print("\n[+] Single move executed. Exiting.")
+                        break
+
+                    print("\n[*] Waiting for opponent's next move...")
+                    time.sleep(0.20)
+                    continue
+
+            # ── STATE 2: IT IS OPPONENT'S TURN -> DETECT OPPONENT MOVE ──
             scan_count += 1
             curr_shot = capture_desktop_screenshot()
             if curr_shot:
                 opp_move = detect_opponent_move_fast(curr_shot, board, board_bbox, player_color, last_my_move)
-                turn_triggered = False
-
                 if opp_move and opp_move in board.legal_moves:
                     t_detect = time.time()
                     print(f"\n[Opponent Moved]: {opp_move.uci()} -> Pushing to matrix...")
                     board.push(opp_move)
                     print(format_board_ascii(board, player_color))
-                    turn_triggered = True
+                    # Next tick will see board.turn == my_color and play our move!
+                    continue
                 else:
-                    # Check if highlights changed from our previous move (fail-proof FEN recovery)
+                    # Check if visual highlights changed from our previous move (fail-proof FEN recovery)
                     hl = get_highlighted_squares(curr_shot, board_bbox, player_color)
                     my_move_squares = set()
                     if last_my_move:
@@ -1120,58 +1180,11 @@ def run_autonomous_chess_game(
                     if hl and not hl.issubset(my_move_squares):
                         # Visual change detected! Rescan ground-truth FEN directly
                         new_board, _, _ = sync_game_state_or_midgame(curr_shot, board_bbox, player_color)
-                        if new_board.turn == my_color and not new_board.is_game_over():
-                            t_detect = time.time()
-                            print(f"\n[Visual FEN Trigger]: Ground-truth board resynced! Our turn ({player_color.upper()}).")
+                        if new_board.king(chess.WHITE) is not None and new_board.king(chess.BLACK) is not None:
                             board = new_board
+                            print(f"\n[Visual FEN Trigger]: Ground-truth board resynced! Turn={'OURS' if board.turn == my_color else 'OPPONENT'}")
                             print(format_board_ascii(board, player_color))
-                            turn_triggered = True
-
-                if turn_triggered:
-                    if board.is_game_over():
-                        print("\n[+] Game concluded after opponent move.")
-                        break
-
-                    if check_stop():
-                        print("\n[Chess Titan] Move aborted by operator stop request.")
-                        break
-
-                    # Calculate best move with Stockfish 16 NNUE (~200ms)
-                    res = chess_engine.query_best_move(board, time_limit=0.25)
-                    if res and res.get("success"):
-                        my_move = res["move"]
-                        eval_str = f"Mate in {res['mate']}" if res.get('mate') else f"{res.get('score', 0):+.2f}"
-                        print(f"[Stockfish 16 NNUE]: Depth {res.get('depth', 16)} | Eval: {eval_str} | Best Move: {my_move.uci()}")
-
-                        # Target speed delay with responsive 50ms stop polling
-                        target_delay = random.uniform(max(0.5, time_delay_target - 0.2), time_delay_target + 0.3)
-                        elapsed_so_far = time.time() - t_detect
-                        remaining_wait = max(0.05, target_delay - elapsed_so_far)
-                        t_wait_start = time.time()
-                        while time.time() - t_wait_start < remaining_wait:
-                            if check_stop():
-                                print("\n[Chess Titan] Move aborted by operator stop request during timing delay.")
-                                return
-                            time.sleep(0.05)
-
-                        if check_stop():
-                            print("\n[Chess Titan] Move aborted by operator stop request before click.")
-                            return
-
-                        # Physically execute move with 2-click mouse method
-                        execute_rapid_mouse_move(board_bbox, res["from_sq"], res["to_sq"], player_color)
-                        board.push(my_move)
-                        last_my_move = my_move
-                        moves_made += 1
-                        total_time = time.time() - t_detect
-                        print(f"[Executed Move #{moves_made}]: {my_move.uci()} in {total_time:.2f}s total")
-                        print(format_board_ascii(board, player_color))
-
-                    if single_move:
-                        print("\n[+] Single move executed. Exiting.")
-                        break
-
-                    print("\n[*] Waiting for opponent's next move...")
+                            continue
 
             if check_stop():
                 print("\n[Chess Titan] Operator disengaged. Exiting autonomous loop.")
@@ -1180,12 +1193,12 @@ def run_autonomous_chess_game(
             # Heartbeat message every 2.5 seconds
             now = time.time()
             if now - last_heartbeat_time > 2.5:
-                turn_label = "Your Turn" if (board.turn == (chess.WHITE if player_color == "white" else chess.BLACK)) else "Opponent Turn"
+                turn_label = "Your Turn" if (board.turn == my_color) else "Opponent Turn"
                 sys.stdout.write(f"\r[*] Active Scan #{scan_count} ({turn_label}) | Board Locked at {board_bbox}   ")
                 sys.stdout.flush()
                 last_heartbeat_time = now
 
-            time.sleep(0.15)
+            time.sleep(0.12)
 
         except KeyboardInterrupt:
             print("\n[!] Autonomous Chess paused by operator.")
