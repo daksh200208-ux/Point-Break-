@@ -74,8 +74,8 @@ FEN_MAP = {
     'bp': 'p', 'bn': 'n', 'bb': 'b', 'br': 'r', 'bq': 'q', 'bk': 'k'
 }
 
-# Standard 1080p maximized browser on Chess.com:
-DEFAULT_BOARD_BBOX = (334, 283, 884, 833)
+# Standard 1080p maximized browser on Chess.com (calibrated 590x590 px):
+DEFAULT_BOARD_BBOX = (336, 280, 926, 870)
 
 
 
@@ -368,16 +368,35 @@ def detect_chessboard_bounds(screen_img: Image.Image) -> Tuple[int, int, int, in
     """
     Finds the exact chessboard outer border [x1, y1, x2, y2] across multiple themes.
     Uses:
+    0. Canny edge / contour detector (theme-independent: wood, dark, light, custom).
     1. Dark background contrast segmentation (Chess.com layout).
     2. Morphological green square mask clustering.
     3. Config fallback or standard 1080p center-left coordinates.
     """
     w, h = screen_img.size
     cv_img = cv2.cvtColor(np.array(screen_img), cv2.COLOR_RGB2BGR)
-    gray = cv2.cvtColor(cv_img, cv2.COLOR_RGB2GRAY)
+    gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
 
     best_bbox = None
     max_area = 0
+
+    # Strategy 0: High-Precision Canny Edge Detection (100% theme-independent)
+    edges = cv2.Canny(gray, 35, 120)
+    cnts_e, _ = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    for cnt in cnts_e:
+        x, y, bw, bh = cv2.boundingRect(cnt)
+        if bw > w * 0.20 and bh > h * 0.35:
+            ratio = float(bw) / float(bh) if bh > 0 else 0
+            if 0.95 <= ratio <= 1.05:
+                area = bw * bh
+                if area > max_area:
+                    side = round((bw + bh) / 2)
+                    max_area = area
+                    best_bbox = (x, y, x + side, y + side)
+
+    if best_bbox:
+        save_chess_config({"board_bbox": list(best_bbox)})
+        return best_bbox
 
     # Strategy 1: Dark background threshold + morphological close
     # Chess.com page background is dark grey (<60), board squares are >110
@@ -623,7 +642,8 @@ def classify_single_square(sq_crop: np.ndarray, templates: Dict[str, Tuple[np.nd
     h, w = sq_crop.shape[:2]
     center = sq_crop[int(h * 0.2):int(h * 0.8), int(w * 0.2):int(w * 0.8)]
     gray = cv2.cvtColor(center, cv2.COLOR_BGR2GRAY)
-    if np.std(gray) < 6.0:
+    std_val = float(np.std(gray))
+    if std_val < 6.0:
         return None
 
     sq_gray = cv2.cvtColor(sq_crop, cv2.COLOR_BGR2GRAY)
@@ -637,7 +657,9 @@ def classify_single_square(sq_crop: np.ndarray, templates: Dict[str, Tuple[np.nd
             best_score = score
             best_p = k
 
-    if best_p and best_score > 0.20:
+    # If center has high variance (>10.0), a piece is physically present on the square
+    min_thresh = 0.02 if std_val > 10.0 else 0.15
+    if best_p and best_score > min_thresh:
         # Verify piece color using actual screen pixel brightness inside the template silhouette
         _, tmpl_mask = templates[best_p]
         piece_pixels = sq_gray[tmpl_mask > 128]
@@ -784,7 +806,7 @@ def sync_game_state_or_midgame(
     if len(pieces_found) < 2 or not (has_white_king and has_black_king):
         print(f"[!] Warning: Board scan found only {len(pieces_found)} pieces (White King={has_white_king}, Black King={has_black_king}).")
         if board_bbox != DEFAULT_BOARD_BBOX:
-            print(f"[*] Re-aligning with calibrated 550x550 board at {DEFAULT_BOARD_BBOX}...")
+            print(f"[*] Re-aligning with calibrated 590x590 board at {DEFAULT_BOARD_BBOX}...")
             board_bbox = DEFAULT_BOARD_BBOX
             fen_body = scan_board_fen(curr_screen, board_bbox, player_color)
             pieces_found = [c for c in fen_body if c.isalpha()]
@@ -793,7 +815,10 @@ def sync_game_state_or_midgame(
 
     if len(pieces_found) < 2 or not (has_white_king and has_black_king):
         print("[!] Board scan unconfirmed: Valid board not yet visible. Defaulting to standard opening board.")
-        return chess.Board(), None, False
+        init_board = chess.Board()
+        if player_color.lower() == "black":
+            init_board.turn = chess.BLACK
+        return init_board, None, False
 
     hl = get_highlighted_squares(curr_screen, board_bbox, player_color)
     is_midgame = (fen_body != "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
