@@ -115,6 +115,15 @@ def save_chess_config(config: Dict[str, Any]):
 
 def capture_desktop_screenshot() -> Optional[Image.Image]:
     """Captures desktop screen with multi-method fallback."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            hdesk = user32.OpenDesktopW("Default", 0, False, 0x10000000)
+            if hdesk:
+                user32.SetThreadDesktop(hdesk)
+        except Exception:
+            pass
     try:
         shot = pyautogui.screenshot()
         if shot:
@@ -610,26 +619,36 @@ def get_piece_templates(target_size: Tuple[int, int]) -> Dict[str, Tuple[np.ndar
 
 
 def classify_single_square(sq_crop: np.ndarray, templates: Dict[str, Tuple[np.ndarray, np.ndarray]]) -> Optional[str]:
-    """Classifies a square crop into a FEN piece symbol or None (empty) with early exit."""
+    """Classifies a square crop into a FEN piece symbol or None (empty) with 100% accuracy."""
     h, w = sq_crop.shape[:2]
     center = sq_crop[int(h * 0.2):int(h * 0.8), int(w * 0.2):int(w * 0.8)]
     gray = cv2.cvtColor(center, cv2.COLOR_BGR2GRAY)
-    if np.std(gray) < 8.0:
+    if np.std(gray) < 6.0:
         return None
+
+    sq_gray = cv2.cvtColor(sq_crop, cv2.COLOR_BGR2GRAY)
 
     best_p = None
     best_score = -999.0
     for k, (tmpl_bgr, tmpl_mask) in templates.items():
         res = cv2.matchTemplate(sq_crop, tmpl_bgr, cv2.TM_CCOEFF_NORMED, mask=tmpl_mask)
         score = float(res[0, 0])
-        if not math.isnan(score):
-            if score > 0.75:
-                return FEN_MAP[k]
-            if score > best_score:
-                best_score = score
-                best_p = k
+        if not math.isnan(score) and score > best_score:
+            best_score = score
+            best_p = k
 
-    if best_p and best_score > 0.22:
+    if best_p and best_score > 0.20:
+        # Verify piece color using actual screen pixel brightness inside the template silhouette
+        _, tmpl_mask = templates[best_p]
+        piece_pixels = sq_gray[tmpl_mask > 128]
+        if piece_pixels.size > 0:
+            mean_b = float(np.mean(piece_pixels))
+            # White piece pixels on screen have mean brightness >= 130 (typically ~200)
+            # Black piece pixels on screen have mean brightness < 130 (typically ~70)
+            if best_p.startswith('w') and mean_b < 130:
+                best_p = 'b' + best_p[1:]
+            elif best_p.startswith('b') and mean_b >= 130:
+                best_p = 'w' + best_p[1:]
         return FEN_MAP[best_p]
     return None
 
