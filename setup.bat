@@ -20,7 +20,7 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 
 echo.
-echo [3/3] Initializing environment secrets...
+echo [3/4] Initializing environment secrets...
 if not exist .env (
     copy .env.example .env
     echo Created .env configuration file.
@@ -28,6 +28,12 @@ if not exist .env (
 ) else (
     echo Existing .env detected. Keeping current configuration.
 )
+
+echo.
+echo [4/4] Configuring Operator Profile...
+set /p OP_NAME="Enter your name or preferred title (e.g. Commander, Bruce, Alex - press Enter for 'Sir'): "
+if "%OP_NAME%"=="" set OP_NAME=Sir
+python -c "import json, os; p='jarvis_memory.json'; d=json.load(open(p, 'r', encoding='utf-8')) if os.path.exists(p) else {}; d['operator_name']='%OP_NAME%'; json.dump(d, open(p, 'w', encoding='utf-8'), indent=2); print('  [Profile] Operator salutation configured as: %OP_NAME%')"
 
 echo.
 echo ==============================================================================
