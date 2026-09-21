@@ -812,44 +812,45 @@ def speech_worker():
                 pass
         cleaned_text = re.sub(r'[*_#`~\[\]\(\)\{\}\<\>\/|@\^]', ' ', raw_text).strip()
         if not cleaned_text:
-            return
+            return None
 
-        # 1. Primary High-Speed Voice Engine: Edge TTS (en-GB-RyanNeural) - Instant (<0.5s), Ultra-crisp, Unlimited
+        base_stem = os.path.splitext(out_path)[0]
+
+        # 1. PRIMARY ENGINE: Cloned TARS Voice via Pocket TTS (100% Local Neural Audio)
         try:
+            from tars_speak import generate_tars_audio
+            wav_target = base_stem + ".wav"
+            generate_tars_audio(cleaned_text, wav_target)
+            if os.path.exists(wav_target) and os.path.getsize(wav_target) > 0:
+                return wav_target
+        except Exception as local_err:
+            print(f"  [Pocket TTS Notice]: {local_err} (Bridging via Edge TTS)")
+
+        # 2. SEAMLESS BRIDGE / FALLBACK: Edge TTS (if Pocket TTS is warming up or fails)
+        try:
+            mp3_target = base_stem + ".mp3"
             if protocol_omega_active:
                 c = edge_tts.Communicate(cleaned_text, VOICE, pitch="-18Hz", rate="+10%", volume=vol)
             else:
                 c = edge_tts.Communicate(cleaned_text, VOICE, pitch=pitch, rate=rate, volume=vol)
-            await asyncio.wait_for(c.save(out_path), timeout=10.0)
-            if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
-                return
+            await asyncio.wait_for(c.save(mp3_target), timeout=8.0)
+            if os.path.exists(mp3_target) and os.path.getsize(mp3_target) > 0:
+                return mp3_target
         except Exception as cloud_err:
-            print(f"  [Edge TTS Primary Error]: {cloud_err} (Attempting local synthesis fallback)")
+            print(f"  [Edge TTS Fallback Error]: {cloud_err}")
 
-        # 2. Local Fallback: Pocket TTS / SAPI
-        try:
-            from tars_speak import generate_tars_audio
-            wav_tmp = out_path + ".wav" if not out_path.endswith(".wav") else out_path
-            generate_tars_audio(cleaned_text, wav_tmp)
-            if os.path.exists(wav_tmp) and os.path.getsize(wav_tmp) > 0:
-                return
-        except Exception as local_err:
-            print(f"  [Local TTS Fallback Error]: {local_err}")
+        return None
 
-    def play_chunk(tmp_path):
+    def play_chunk(audio_file_path):
         global tars_speaking, speech_interrupted, hard_interrupted
-        actual_path = tmp_path
-        if not os.path.exists(actual_path) or os.path.getsize(actual_path) == 0:
-            if os.path.exists(tmp_path + ".wav") and os.path.getsize(tmp_path + ".wav") > 0:
-                actual_path = tmp_path + ".wav"
-            else:
-                return True
+        if not audio_file_path or not os.path.exists(audio_file_path) or os.path.getsize(audio_file_path) == 0:
+            return False
         try:
             tars_speaking = True
             if not pygame.mixer.get_init():
                 pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
             pygame.mixer.music.set_volume(1.0)
-            pygame.mixer.music.load(actual_path)
+            pygame.mixer.music.load(audio_file_path)
             pygame.mixer.music.play()
             while pygame.mixer.music.get_busy() and tars_speaking and not speech_interrupted and not hard_interrupted:
                 time.sleep(0.03)
@@ -865,10 +866,8 @@ def speech_worker():
         finally:
             tars_speaking = False
             try:
-                if os.path.exists(actual_path):
-                    os.remove(actual_path)
-                if os.path.exists(tmp_path) and actual_path != tmp_path:
-                    os.remove(tmp_path)
+                if audio_file_path and os.path.exists(audio_file_path):
+                    os.remove(audio_file_path)
             except Exception:
                 pass
         return not speech_interrupted and not hard_interrupted
@@ -917,11 +916,12 @@ def speech_worker():
                         ]
                         warn_line = random.choice(warn_options)
                         print(f"\n  ⚠️  P.O.I.N.T.  B.R.E.A.K. >  {warn_line}")
-                        fd, tmp_warn = tempfile.mkstemp(suffix=".mp3", dir=JARVIS_DIR)
+                        fd, tmp_warn = tempfile.mkstemp(suffix=".wav", dir=JARVIS_DIR)
                         os.close(fd)
                         try:
-                            loop.run_until_complete(gen_audio(warn_line, TARS_WARN_PITCH, TARS_WARN_RATE, TARS_WARN_VOL, tmp_warn))
-                            play_chunk(tmp_warn)
+                            audio_warn = loop.run_until_complete(gen_audio(warn_line, TARS_WARN_PITCH, TARS_WARN_RATE, TARS_WARN_VOL, tmp_warn))
+                            if audio_warn:
+                                play_chunk(audio_warn)
                         except Exception as ex:
                             print(f"  [TTS Warn Error]: {ex}")
 
@@ -948,11 +948,12 @@ def speech_worker():
                             ]
                             ack_line = random.choice(ack_options)
                             print(f"\n  ✅  P.O.I.N.T.  B.R.E.A.K. >  {ack_line}")
-                            fd_ack, tmp_ack = tempfile.mkstemp(suffix=".mp3", dir=JARVIS_DIR)
+                            fd_ack, tmp_ack = tempfile.mkstemp(suffix=".wav", dir=JARVIS_DIR)
                             os.close(fd_ack)
                             try:
-                                loop.run_until_complete(gen_audio(ack_line, TARS_NORMAL_PITCH, TARS_NORMAL_RATE, TARS_NORMAL_VOL, tmp_ack))
-                                play_chunk(tmp_ack)
+                                audio_ack = loop.run_until_complete(gen_audio(ack_line, TARS_NORMAL_PITCH, TARS_NORMAL_RATE, TARS_NORMAL_VOL, tmp_ack))
+                                if audio_ack:
+                                    play_chunk(audio_ack)
                             except Exception as ex:
                                 print(f"  [TTS Ack Error]: {ex}")
                             resume_prefix = ""
@@ -961,11 +962,12 @@ def speech_worker():
                             interruption_strikes += 1
                             shout_line = "DO NOT CUT ME OFF, SIR! Allow me to finish!"
                             print(f"\n  🔥  P.O.I.N.T.  B.R.E.A.K. >  {shout_line} (BOOMING ANGER)")
-                            fd_shout, tmp_shout = tempfile.mkstemp(suffix=".mp3", dir=JARVIS_DIR)
+                            fd_shout, tmp_shout = tempfile.mkstemp(suffix=".wav", dir=JARVIS_DIR)
                             os.close(fd_shout)
                             try:
-                                loop.run_until_complete(gen_audio(shout_line, TARS_SHOUT_PITCH, TARS_SHOUT_RATE, TARS_SHOUT_VOL, tmp_shout))
-                                play_chunk(tmp_shout)
+                                audio_shout = loop.run_until_complete(gen_audio(shout_line, TARS_SHOUT_PITCH, TARS_SHOUT_RATE, TARS_SHOUT_VOL, tmp_shout))
+                                if audio_shout:
+                                    play_chunk(audio_shout)
                             except Exception as ex:
                                 print(f"  [TTS Shout Error]: {ex}")
 
@@ -974,11 +976,12 @@ def speech_worker():
                                 interruption_strikes = 0
                                 ack_line = "Thank you, Sir. Now, let me finish."
                                 print(f"\n  ✅  P.O.I.N.T.  B.R.E.A.K. >  {ack_line}")
-                                fd_ack, tmp_ack = tempfile.mkstemp(suffix=".mp3", dir=JARVIS_DIR)
+                                fd_ack, tmp_ack = tempfile.mkstemp(suffix=".wav", dir=JARVIS_DIR)
                                 os.close(fd_ack)
                                 try:
-                                    loop.run_until_complete(gen_audio(ack_line, TARS_NORMAL_PITCH, TARS_NORMAL_RATE, TARS_NORMAL_VOL, tmp_ack))
-                                    play_chunk(tmp_ack)
+                                    audio_ack = loop.run_until_complete(gen_audio(ack_line, TARS_NORMAL_PITCH, TARS_NORMAL_RATE, TARS_NORMAL_VOL, tmp_ack))
+                                    if audio_ack:
+                                        play_chunk(audio_ack)
                                 except Exception: pass
                                 resume_prefix = ""
                             else:
@@ -995,11 +998,12 @@ def speech_worker():
                         ]
                         shout_line = random.choice(shout_options)
                         print(f"\n  🔥  P.O.I.N.T.  B.R.E.A.K. >  {shout_line} (BOOMING ANGER)")
-                        fd_shout, tmp_shout = tempfile.mkstemp(suffix=".mp3", dir=JARVIS_DIR)
+                        fd_shout, tmp_shout = tempfile.mkstemp(suffix=".wav", dir=JARVIS_DIR)
                         os.close(fd_shout)
                         try:
-                            loop.run_until_complete(gen_audio(shout_line, TARS_SHOUT_PITCH, TARS_SHOUT_RATE, TARS_SHOUT_VOL, tmp_shout))
-                            play_chunk(tmp_shout)
+                            audio_shout = loop.run_until_complete(gen_audio(shout_line, TARS_SHOUT_PITCH, TARS_SHOUT_RATE, TARS_SHOUT_VOL, tmp_shout))
+                            if audio_shout:
+                                play_chunk(audio_shout)
                         except Exception as ex:
                             print(f"  [TTS Shout Error]: {ex}")
 
@@ -1013,11 +1017,12 @@ def speech_worker():
                             interruption_strikes = 0
                             ack_line = "Thank you, Sir. Now, let me finish."
                             print(f"\n  ✅  P.O.I.N.T.  B.R.E.A.K. >  {ack_line}")
-                            fd_ack, tmp_ack = tempfile.mkstemp(suffix=".mp3", dir=JARVIS_DIR)
+                            fd_ack, tmp_ack = tempfile.mkstemp(suffix=".wav", dir=JARVIS_DIR)
                             os.close(fd_ack)
                             try:
-                                loop.run_until_complete(gen_audio(ack_line, TARS_NORMAL_PITCH, TARS_NORMAL_RATE, TARS_NORMAL_VOL, tmp_ack))
-                                play_chunk(tmp_ack)
+                                audio_ack = loop.run_until_complete(gen_audio(ack_line, TARS_NORMAL_PITCH, TARS_NORMAL_RATE, TARS_NORMAL_VOL, tmp_ack))
+                                if audio_ack:
+                                    play_chunk(audio_ack)
                             except Exception: pass
                             resume_prefix = ""
                         else:
@@ -1032,24 +1037,30 @@ def speech_worker():
                     current_sentence = resume_prefix + current_sentence
                     resume_prefix = ""
 
-                fd, tmp_sent = tempfile.mkstemp(suffix=".mp3", dir=JARVIS_DIR)
+                fd, tmp_sent = tempfile.mkstemp(suffix=".wav", dir=JARVIS_DIR)
                 os.close(fd)
 
                 spoke_online = False
+                generated_audio_path = None
                 for attempt in range(2):
                     if hard_interrupted:
                         break
                     try:
-                        loop.run_until_complete(gen_audio(current_sentence, TARS_NORMAL_PITCH, TARS_NORMAL_RATE, TARS_NORMAL_VOL, tmp_sent))
-                        spoke_online = True
-                        break
-                    except Exception:
+                        generated_audio_path = loop.run_until_complete(gen_audio(current_sentence, TARS_NORMAL_PITCH, TARS_NORMAL_RATE, TARS_NORMAL_VOL, tmp_sent))
+                        if generated_audio_path and os.path.exists(generated_audio_path):
+                            spoke_online = True
+                            break
+                    except Exception as ge:
+                        print(f"  [Audio Gen Attempt Error]: {ge}")
                         if attempt < 1:
                             time.sleep(0.2)
 
                 if hard_interrupted:
                     try:
-                        if os.path.exists(tmp_sent): os.remove(tmp_sent)
+                        if generated_audio_path and os.path.exists(generated_audio_path):
+                            os.remove(generated_audio_path)
+                        elif os.path.exists(tmp_sent):
+                            os.remove(tmp_sent)
                     except: pass
                     break
 
@@ -1064,10 +1075,10 @@ def speech_worker():
                     except:
                         tars_speaking = False
 
-                if spoke_online:
+                if spoke_online and generated_audio_path:
                     speech_interrupted = False
                     current_spoken_chunk = current_sentence.lower()
-                    completed = play_chunk(tmp_sent)
+                    completed = play_chunk(generated_audio_path)
                     if not completed and not speech_interrupted and not hard_interrupted:
                         try:
                             import pythoncom, win32com.client
@@ -1183,10 +1194,10 @@ threading.Thread(target=_verbal_barge_in_worker, daemon=True, name="Verbal-Barge
 
 def _prewarm_tars_voice():
     try:
-        time.sleep(8.0)
+        time.sleep(1.0)
         from tars_speak import get_tars_model_and_voice
         get_tars_model_and_voice()
-        print("  [Voice Engine] TARS neural voice pre-warmed and ready.")
+        print("  [Voice Engine] Cloned TARS neural voice pre-warmed and ready.")
     except Exception as ex:
         print(f"  [Voice Engine Prewarm Notice]: {ex}")
 
