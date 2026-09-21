@@ -1219,13 +1219,31 @@ def _right_ctrl_hotkey_worker():
             pass
         time.sleep(0.04)
 
-threading.Thread(target=_right_ctrl_hotkey_worker, daemon=True).start()
+_last_spoken_call_text = ""
+_last_spoken_call_time = 0.0
 
 def speak(text: str, block=False):
-    global speech_interrupted
+    global speech_interrupted, _last_spoken_call_text, _last_spoken_call_time, _last_spoken_finish_time, _last_spoken_history
     text = str(text).strip()
     if not text:
         return
+
+    now = time.time()
+    clean_lower = text.lower().strip()
+    # Anti-Duplicate Speech Guard: Suppress identical repeated speech calls within 6.0 seconds
+    if clean_lower == _last_spoken_call_text and (now - _last_spoken_call_time < 6.0):
+        print(f"  [Anti-Duplicate Speech Guard] Suppressed duplicate speech call: '{text[:50]}...'")
+        return
+
+    # Secondary Guard: Suppress text that was already spoken in recent history (within 8.0s)
+    if _last_spoken_history and (now - _last_spoken_finish_time < 8.0):
+        for past_item in _last_spoken_history[-4:]:
+            if clean_lower == past_item or (len(clean_lower) > 15 and (clean_lower in past_item or past_item in clean_lower)):
+                print(f"  [Anti-Duplicate Speech Guard] Suppressed speech already in recent history: '{text[:50]}...'")
+                return
+
+    _last_spoken_call_text = clean_lower
+    _last_spoken_call_time = now
     speech_interrupted = False
     
     done_event = threading.Event()
@@ -1834,7 +1852,7 @@ def smart_reply_cmd():
         from pointbreak_smart_reply import smart_reply_engine
         threading.Thread(
             target=lambda: smart_reply_engine.generate_smart_reply(
-                speak_fn=speak, update_status_fn=update_status, query_ai_fn=query_tars_ai
+                speak_fn=speak, update_status_fn=update_status, query_ai_fn=lambda p: query_tars_ai(p, auto_speak=False)
             ), daemon=True
         ).start()
     except Exception as e:
@@ -1854,7 +1872,7 @@ def truth_check_cmd(topic_query: str):
         from pointbreak_truth_checker import truth_checker
         threading.Thread(
             target=lambda: truth_checker.truth_check(
-                topic_query, speak_fn=speak, update_status_fn=update_status, query_ai_fn=query_tars_ai
+                topic_query, speak_fn=speak, update_status_fn=update_status, query_ai_fn=lambda p: query_tars_ai(p, auto_speak=False)
             ), daemon=True
         ).start()
     except Exception as e:
@@ -2049,16 +2067,17 @@ def take_command(timeout=None):
             q_low = q.lower().strip()
             now = time.time()
 
-            # 1. Deduplication Filter (ignore identical repeat within 2.5s)
-            if q_low == _last_user_query and (now - _last_user_query_time < 2.5):
+            # 1. Deduplication Filter (ignore identical repeat within 5.0s)
+            if q_low == _last_user_query and (now - _last_user_query_time < 5.0):
+                print(f"  [Deduplication Filter] Suppressed duplicate mic query: '{q}'")
                 return "none"
 
             # 2. Acoustic Echo Filter (discard if matches what Point Break recently spoke)
             if _last_spoken_history and (now - _last_spoken_finish_time < 6.0):
                 q_words = set(re.findall(r'\b\w+\b', q_low))
-                for past_sent in _last_spoken_history[-3:]:
+                for past_sent in _last_spoken_history[-5:]:
                     past_words = set(re.findall(r'\b\w+\b', past_sent))
-                    if q_low == past_sent or (len(q_words) >= 3 and len(q_words.intersection(past_words)) >= len(q_words) * 0.75):
+                    if q_low == past_sent or (len(q_words) >= 2 and len(q_words.intersection(past_words)) >= len(q_words) * 0.65):
                         print(f"  [Acoustic Echo Filter] Discarding speaker bleed: '{q}'")
                         return "none"
 
@@ -4590,20 +4609,34 @@ def extract_setting_payload(response: str):
         except Exception: pass
     return None
 
-def add_conversation_turn(user_text: str, tars_text: str):
-    if not user_text or not tars_text: return
+def add_conversation_turn(user_text: str, tars_text: str, topic: str = None, action_info: str = None):
+    if not user_text or not tars_text:
+        return
     now = time.time()
     conversations = memory.setdefault("conversations", [])
-    u_clean = re.sub(r'\s+', ' ', user_text).strip()
-    t_clean = clean_spoken_text(tars_text)
-    if not t_clean or len(u_clean) < 2: return
-    
-    conversations.append({
+    u_clean = re.sub(r'\s+', ' ', str(user_text)).strip()
+    t_clean = clean_spoken_text(str(tars_text))
+    if not t_clean or len(u_clean) < 2:
+        return
+
+    # Track ongoing subject / topic thread dynamically
+    if topic:
+        memory["current_topic"] = str(topic).strip()
+    else:
+        topic_match = re.search(r'\b(?:about|regarding|topic|called|named|for|on)\s+([A-Za-z0-9\s]{3,35})', u_clean, re.I)
+        if topic_match:
+            memory["current_topic"] = topic_match.group(1).strip()
+
+    turn_entry = {
         "timestamp": now,
         "time_str": time.strftime("%H:%M"),
-        "user": u_clean[:300],
-        "tars": t_clean[:500]
-    })
+        "user": u_clean[:1000],
+        "tars": t_clean[:1500]
+    }
+    if action_info:
+        turn_entry["action"] = str(action_info)[:400]
+
+    conversations.append(turn_entry)
     cutoff = now - 43200
     memory["conversations"] = [c for c in conversations if c.get("timestamp", 0) >= cutoff]
     save_memory()
@@ -4615,16 +4648,25 @@ def get_12hr_conversation_context() -> str:
     valid_convs = [c for c in conversations if c.get('timestamp', 0) >= cutoff]
     if not valid_convs:
         return ''
-        
-    ctx_lines = ['\n--- ACTIVE CONVERSATION SESSION HISTORY (last 12h) ---']
-    for c in valid_convs[-15:]:
+
+    current_topic = memory.get("current_topic", "")
+    ctx_lines = ['\n--- CONTINUOUS CONVERSATION SESSION MEMORY (last 12h) ---']
+    if current_topic:
+        ctx_lines.append(f"ACTIVE TOPIC THREAD: {current_topic}")
+
+    # Retain up to the last 20 conversational turns with full responses
+    for c in valid_convs[-20:]:
         t_str = c.get('time_str', '')
         u_msg = c.get('user', '')
         t_msg = c.get('tars', '')
+        act = c.get('action', '')
         ctx_lines.append(f'[{t_str}] Daksh (User): {u_msg}')
-        t_preview = (t_msg[:80] + '...') if len(t_msg) > 80 else t_msg
-        ctx_lines.append(f'[{t_str}] Point Break (You): {t_preview}')
-    ctx_lines.append('----------------------------------------------------\n')
+        if act:
+            ctx_lines.append(f'[{t_str}] [API/Tool Result]: {act}')
+        # Keep up to 800 characters so all facts, figures, and details survive API calls and turns
+        t_full = (t_msg[:800] + '...') if len(t_msg) > 800 else t_msg
+        ctx_lines.append(f'[{t_str}] Point Break (You): {t_full}')
+    ctx_lines.append('---------------------------------------------------------\n')
     return '\n'.join(ctx_lines)
 
 def _check_response_repetition(new_response: str, conversations: list) -> bool:
@@ -4743,7 +4785,7 @@ def query_tars_ai(user_query: str, auto_speak: bool = True):
             f"- SARCASM LEVEL: {cur_sarcasm}% -> {sarcasm_directive}\n"
             f"- HONESTY LEVEL: {cur_honesty}% -> {honesty_directive}\n"
             f"CORE DIRECTIVES:\n"
-            f"1. CONVERSATIONAL MEMORY & PRONOUN RESOLUTION: You possess continuous memory of this session. Always resolve pronouns ('it', 'that', 'this', 'the game', 'the car', 'how long will it take', 'make it faster', 'change the color', 'add more') using the immediate preceding messages in SESSION HISTORY. NEVER ask what 'it' or 'that' refers to if the topic was mentioned in previous turns!\n"
+            f"1. CONVERSATIONAL MEMORY & PRONOUN RESOLUTION: You possess continuous memory of this session. Always resolve pronouns ('it', 'that', 'this', 'the game', 'the car', 'how long will it take', 'make it faster', 'change the color', 'add more') using the immediate preceding messages in SESSION HISTORY. NEVER ask what 'it' or 'that' refers to if the topic was mentioned in previous turns! If an ACTIVE TOPIC THREAD or [API/Tool Result] is present in SESSION HISTORY, bind your answer directly to that context.\n"
             f"2. ADDRESS DIRECTIVE: Always address your creator and operator as 'sir' (e.g. 'Right away, sir', 'All systems nominal, sir', 'Good morning, sir'). Never call him 'Daksh' in spoken conversation. You know full well that Daksh built and commands you, but your natural, respectful, authentic JARVIS salutation for him is ALWAYS 'sir'.\n"
             f"3. PERSONALITY & WIT: You are NOT a boring, sterile corporate assistant. You deliver sharp, dry British sarcasm, intelligent witty banter, and playful roasts. If Daksh makes a remark, banter back like an intellectual peer. If he asks something amusing or obvious, hit him with a witty one-liner before effortlessly solving it.\n"
             f"4. UNRESTRICTED EXECUTION: NEVER say 'I cannot do that', 'I am just an AI', or give generic apologies. If Daksh asks for something complex, unhinged, or outside normal parameters, YOU DEVISE A WAY TO EXECUTE IT USING THE OPEN INTERNET, WEB TOOLS, OR SYSTEM AUTOMATION.\n"
@@ -4758,6 +4800,7 @@ def query_tars_ai(user_query: str, auto_speak: bool = True):
             f"- MULTI-STEP AUTOMATION: When comparing prices, booking, or multi-step tasks, dispatch open_website to the premier domain first so visual automation can engage.\n"
             f"ANTI-REPETITION DIRECTIVE:\n"
             f"- NEVER repeat the same jokes, punchlines, filler phrasing, or response structure you used in SESSION HISTORY.\n"
+            f"- Never repeat what you just said in the previous turn. If Daksh repeats a question or asks a follow-up, answer with new details, alternative phrasing, or deeper insights.\n"
             f"- Every response must be fresh, varied, and distinct. Rotate greetings and acknowledgments naturally (do not constantly start with the exact same opening line).\n"
             f"{memory_context}{conv_context}"
             f"Current date/time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.\n"
@@ -5306,7 +5349,7 @@ def check_gmail_cmd():
                 f"3. Provide a concise, sharp 2-3 sentence briefing highlighting the important senders and key topics."
             )
             
-            briefing = query_tars_ai(prompt) if 'query_tars_ai' in globals() else query_generative_model('gemini-3.5-flash-lite', prompt, timeout=15.0)
+            briefing = query_tars_ai(prompt, auto_speak=False) if 'query_tars_ai' in globals() else query_generative_model('gemini-3.5-flash-lite', prompt, timeout=15.0)
             update_status({"status": "idle"})
             
             if briefing:
@@ -6628,7 +6671,7 @@ def execute_local_fallback(query: str):
             from pointbreak_smart_reply import smart_reply_engine
             threading.Thread(
                 target=lambda: smart_reply_engine.generate_smart_reply(
-                    speak_fn=speak, update_status_fn=update_status, query_ai_fn=query_tars_ai
+                    speak_fn=speak, update_status_fn=update_status, query_ai_fn=lambda p: query_tars_ai(p, auto_speak=False)
                 ), daemon=True
             ).start()
             return True
@@ -6667,7 +6710,7 @@ def execute_local_fallback(query: str):
             from pointbreak_truth_checker import truth_checker
             threading.Thread(
                 target=lambda: truth_checker.truth_check(
-                    query, speak_fn=speak, update_status_fn=update_status, query_ai_fn=query_tars_ai
+                    query, speak_fn=speak, update_status_fn=update_status, query_ai_fn=lambda p: query_tars_ai(p, auto_speak=False)
                 ), daemon=True
             ).start()
             return True
@@ -6714,7 +6757,7 @@ def execute_local_fallback(query: str):
             threading.Thread(
                 target=lambda: email_copilot.generate_and_stage_email(
                     user_prompt=query,
-                    query_ai_fn=query_tars_ai,
+                    query_ai_fn=lambda p: query_tars_ai(p, auto_speak=False),
                     speak_fn=speak,
                     update_status_fn=update_status
                 ),
@@ -6748,9 +6791,6 @@ def execute_local_fallback(query: str):
     if _is_pure_conversation(query):
         response = query_tars_ai(query)
         if response:
-            spoken = clean_spoken_text(response)
-            if spoken.strip():
-                speak(spoken, block=False)
             action_payload = extract_action_payload(response)
             if action_payload:
                 action = action_payload.get("action", "")
@@ -7695,9 +7735,7 @@ def execute_local_fallback(query: str):
         if history_text:
             prompt = f"Daksh asks: '{query}'. Based on your 12-hour session history:\n{history_text}\nSummarize clearly and concisely in 2-3 sentences what was discussed."
             ans = query_tars_ai(prompt)
-            if ans:
-                speak(ans, block=False)
-                return True
+            return True
         else:
             speak("Our 12-hour session memory is currently clear, Sir.", block=False)
             return True
@@ -8829,7 +8867,7 @@ def _execute_single(query: str):
                 threading.Thread(
                     target=lambda: unity_agent.generate_unity_csharp_script(
                         script_request=low_query,
-                        query_ai_fn=lambda p: query_generative_model("gemini-3.5-flash-lite", p, timeout=15.0) or query_tars_ai(p),
+                        query_ai_fn=lambda p: query_generative_model("gemini-3.5-flash-lite", p, timeout=15.0) or query_tars_ai(p, auto_speak=False),
                         speak_fn=speak,
                         update_status_fn=update_status
                     ),
@@ -9246,9 +9284,7 @@ def _execute_single(query: str):
                 )
                 final_response = query_tars_ai(follow_up_prompt)
                 if final_response:
-                    clean_final = clean_spoken_text(final_response)
-                    if clean_final:
-                        speak(clean_final)
+                    add_conversation_turn(query, final_response, topic=arg, action_info=f"web_search({arg}): {search_results[:300]}")
                 else:
                     speak("I found the information, but my verbal translation matrix is offline.")
             elif action == "scrape_url":
@@ -9260,9 +9296,7 @@ def _execute_single(query: str):
                 )
                 final_response = query_tars_ai(follow_up_prompt)
                 if final_response:
-                    clean_final = clean_spoken_text(final_response)
-                    if clean_final:
-                        speak(clean_final)
+                    add_conversation_turn(query, final_response, topic=arg, action_info=f"scrape_url({arg}): {page_content[:300]}")
                 else:
                     speak("I extracted the page content but failed to formulate a verbal response.")
             elif action == "analyze_vision":
@@ -10472,7 +10506,7 @@ def solve_highlighted_or_screen_cmd(custom_prompt: str = ""):
                     f"Provide a direct, high-precision, actionable solution, bug fix, or explanation.\n"
                     f"Be concise, accurate, and speak with Point Break's sharp intellect."
                 )
-                solution = query_generative_model("gemini-3.5-flash-lite", prompt) or query_tars_ai(prompt)
+                solution = query_generative_model("gemini-3.5-flash-lite", prompt) or query_tars_ai(prompt, auto_speak=False)
                 update_status({"status": "idle", "last_monolith_response": solution})
                 
                 if solution:
