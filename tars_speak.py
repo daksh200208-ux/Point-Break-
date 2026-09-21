@@ -64,14 +64,19 @@ def generate_tars_audio(text: str, output_path: str = None) -> str:
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
     audio_tensor = model.generate_audio(voice_state, text)
-    data = audio_tensor.numpy()
+    data = audio_tensor.numpy().astype(np.float32)
 
-    # Convert to 16-bit PCM for universal Windows playback
-    if data.dtype == np.float32 or data.dtype == np.float64:
-        pcm16 = (np.clip(data, -1.0, 1.0) * 32767).astype(np.int16)
+    # ── STUDIO AMPLITUDE & LOUDNESS NORMALIZATION ──
+    # Pocket TTS generates low raw amplitude tensors (~0.01-0.08 peak).
+    # Normalize to 0.95 peak (-0.45 dBFS) to ensure loud, clear, room-filling cinematic volume.
+    max_amp = np.max(np.abs(data))
+    if max_amp > 1e-5:
+        target_peak = 0.95
+        normalized = data * (target_peak / max_amp)
     else:
-        pcm16 = data.astype(np.int16)
+        normalized = data
 
+    pcm16 = (np.clip(normalized, -1.0, 1.0) * 32767).astype(np.int16)
     scipy.io.wavfile.write(output_path, model.sample_rate, pcm16)
     return output_path
 
