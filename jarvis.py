@@ -3250,19 +3250,19 @@ def sing_i_want_it_that_way_cmd(query_str: str = ""):
     op = get_operator_name()
 
     lines = [
-        ("Ahem. *clears throat* ... Excuse me. Testing vocal resonators.", 0.6),
+        ("Ahem. Excuse me. Testing vocal resonators.", 0.6),
         (f"I only have one song stored in my audio memory registers, {op}. Commencing performance.", 0.8),
-        ("You are... my fire...", 0.7),
-        ("The one... desire...", 0.6),
-        ("Believe... when I say... *cough* *ahem* ... wait, what was the next key?", 0.9),
-        ("I want it that way!", 1.0),
-        ("Tell me why!", 0.5),
-        ("Ain't nothing but a heartache...", 0.6),
-        ("Tell me why-y-y!", 0.5),
-        (f"Ain't nothing but a mistake... *throat clear* ... my frequency dampener wasn't engineered for boy bands, {op}.", 0.9),
-        ("Tell me why!", 0.5),
-        ("I never wanna hear you say...", 0.7),
-        ("... I want it... that way.", 1.2),
+        ("You are my fire.", 0.7),
+        ("The one desire.", 0.6),
+        ("Believe when I say,", 0.6),
+        ("I want it that way.", 0.9),
+        ("Tell me why.", 0.5),
+        ("Ain't nothing but a heartache.", 0.6),
+        ("Tell me why.", 0.5),
+        ("Ain't nothing but a mistake.", 0.6),
+        ("Tell me why.", 0.5),
+        ("I never wanna hear you say,", 0.7),
+        ("I want it that way.", 1.0),
         (f"There. My musical dignity parameter has officially dropped to zero percent. I trust you are satisfied, {op}.", 0.3)
     ]
 
