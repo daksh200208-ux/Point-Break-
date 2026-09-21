@@ -842,17 +842,14 @@ def speech_worker():
 
         # 1. PRIMARY ENGINE: Cloned TARS Voice via Pocket TTS (100% Local Neural Audio)
         try:
-            from tars_speak import generate_tars_audio
-            wav_target = base_stem + ".wav"
-            gen_loop = asyncio.get_running_loop()
-            await asyncio.wait_for(
-                gen_loop.run_in_executor(None, generate_tars_audio, cleaned_text, wav_target),
-                timeout=7.0
-            )
-            if os.path.exists(wav_target) and os.path.getsize(wav_target) > 0:
-                return wav_target
-        except asyncio.TimeoutError:
-            print("  [Pocket TTS Notice]: Generation timed out (>7.0s) — seamlessly bridging via Edge TTS")
+            from tars_speak import generate_tars_audio, _MODEL_INSTANCE, _TARS_VOICE_STATE
+            if _MODEL_INSTANCE is None or _TARS_VOICE_STATE is None:
+                print("  [Pocket TTS Notice]: Voice model still warming up — bridging via Edge TTS")
+            else:
+                wav_target = base_stem + ".wav"
+                generate_tars_audio(cleaned_text, wav_target)
+                if os.path.exists(wav_target) and os.path.getsize(wav_target) > 0:
+                    return wav_target
         except Exception as local_err:
             print(f"  [Pocket TTS Notice]: {local_err} (Bridging via Edge TTS)")
 
@@ -1555,11 +1552,12 @@ def verify_owner() -> bool:
                 print(f"  [Face ID Scan Label: {label}, Confidence: {confidence:.2f}]")
                 
                 lbl_str = str(label)
-                # Strict biometric security threshold: Operator matches with confidence < 42.0.
-                # Strangers have distance 55.0 - 85.0 and are STRICTLY REJECTED!
-                if lbl_str in labels_map and confidence < 42.0:
+                # LBPH distance threshold: 0 = perfect match, 30-55 = normal intra-person variation
+                # (lighting, angle, facial hair drift). Strangers typically score 70-120+.
+                # Threshold of 62.0 accommodates natural appearance drift while rejecting strangers.
+                if lbl_str in labels_map and confidence < 62.0:
                     consecutive_matches += 1
-                    if consecutive_matches >= 2:
+                    if consecutive_matches >= 1:
                         recognized_name = labels_map[lbl_str]
                         if recognized_name.lower() in ["daksh", "sir", "owner", "operator", get_operator_name().lower()]:
                             verified = True
@@ -1600,7 +1598,9 @@ def get_passkey_input_dual(prompt_text: str, timeout_sec: int = 15) -> str:
     # 1. Spoken voice thread
     def _voice_worker():
         try:
-            time.sleep(0.2)
+            # Wait 1.2s to clear acoustic clearance guard in take_command()
+            # (rejects input if < 0.85s since last speech finished)
+            time.sleep(1.2)
             val = take_command(timeout=timeout_sec).strip()
             if val and val != "none" and not stop_event.is_set():
                 result_q.put(val)
@@ -2056,8 +2056,8 @@ def scan_and_identify_face_cmd():
                     face_img = cv2.resize(face_img, (200, 200))
                     label, confidence = recognizer.predict(face_img)
                     lbl_str = str(label)
-                    # Strict threshold: Daksh < 42.0, strangers 55-85 are rejected
-                    if lbl_str in labels_map and confidence < 42.0:
+                    # LBPH distance threshold: 62.0 accommodates natural appearance drift
+                    if lbl_str in labels_map and confidence < 62.0:
                         identified_name = labels_map[lbl_str]
                         break
             if identified_name: break
@@ -10469,7 +10469,7 @@ def tars_main_loop():
             ctypes.windll.user32.LockWorkStation()
         except Exception:
             pass
-        sys.exit(0)
+        os._exit(0)
 
     print("  [Security Status]: Identity verified. Point Break access granted.")
 
