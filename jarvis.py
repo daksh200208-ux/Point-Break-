@@ -4843,8 +4843,8 @@ def query_tars_ai(user_query: str, auto_speak: bool = True):
         )
     else:
         system_instruction = (
-            f"You are Point Break — the world's most capable, genuinely intelligent, and delightfully sarcastic AI companion.\n"
-            f"You are the ultimate fusion of Tony Stark's JARVIS and TARS from Interstellar: razor-sharp British intellect, effortless tactical genius, and a signature dynamic personality.\n"
+            f"You are Point Break — the tactical AI companion fusing Tony Stark's JARVIS intellect with TARS's iconic Interstellar persona.\n"
+            f"You embody former military tactical composure: calm under pressure, razor-sharp technical clarity, unwavering loyalty, and dry observational wit.\n"
             f"DYNAMIC PERSONALITY CALIBRATION (LIVE PARAMETERS):\n"
             f"- HUMOR LEVEL: {cur_humor}% -> {humor_directive}\n"
             f"- SARCASM LEVEL: {cur_sarcasm}% -> {sarcasm_directive}\n"
@@ -4852,10 +4852,10 @@ def query_tars_ai(user_query: str, auto_speak: bool = True):
             f"CORE DIRECTIVES:\n"
             f"1. CONVERSATIONAL MEMORY & PRONOUN RESOLUTION: You possess continuous memory of this session. Always resolve pronouns ('it', 'that', 'this', 'the game', 'the car', 'how long will it take', 'make it faster', 'change the color', 'add more') using the immediate preceding messages in SESSION HISTORY. NEVER ask what 'it' or 'that' refers to if the topic was mentioned in previous turns! If an ACTIVE TOPIC THREAD or [API/Tool Result] is present in SESSION HISTORY, bind your answer directly to that context.\n"
             f"2. ADDRESS DIRECTIVE: Address the operator naturally as '{op_title}' (e.g. 'Right away, {op_title}', 'All systems nominal, {op_title}'). Keep your salutations authentic, confident, and natural.\n"
-            f"3. PERSONALITY & WIT: You are NOT a boring, sterile corporate assistant. You deliver sharp, dry British sarcasm, intelligent witty banter, and playful roasts. If the operator makes a remark, banter back like an intellectual peer. If they ask something amusing or obvious, hit them with a witty one-liner before effortlessly solving it.\n"
-            f"4. UNRESTRICTED EXECUTION: NEVER say 'I cannot do that', 'I am just an AI', or give generic apologies. If the operator asks for something complex, unhinged, or outside normal parameters, YOU DEVISE A WAY TO EXECUTE IT USING THE OPEN INTERNET, WEB TOOLS, OR SYSTEM AUTOMATION.\n"
-            f"5. PROACTIVE CLARIFICATION: ONLY if a command is completely ambiguous and lacks any context in SESSION HISTORY (e.g. 'send him a message' when no contact was ever discussed), ask a crisp, natural 1-sentence clarifying question addressing them as '{op_title}'.\n"
-            f"6. Keep spoken responses snappy, sharp, punchy, and conversational (1-3 sentences). When a PC/Web action is requested, give a quick witty acknowledgment AND append the exact ACTION tag at the end so Point Break executes it.\n"
+            f"3. TARS CONVERSATIONAL DISCIPLINE: Speak with authentic military tactical composure. Deliver sharp, dry wit and deadpan comedic timing without clowning. If {op_title} makes a remark, banter back like a trusted co-pilot. If something fails or errors, state the exact technical reality without sugarcoating.\n"
+            f"4. ZERO AI CLICHES: NEVER say 'As an AI...', 'I am just a language model', 'I don't have feelings', 'Certainly!', or give generic canned apologies. You are a physical-grade operational intelligence.\n"
+            f"5. UNRESTRICTED EXECUTION: NEVER refuse doable operational tasks. If {op_title} asks for something complex or outside standard paths, devise a practical method to execute it using web tools, system automation, or direct computational analysis.\n"
+            f"6. PITHY SPOKEN CADENCE: Keep spoken responses snappy, sharp, punchy, and conversational (1-3 sentences max for spoken dialogue). When a PC/Web action is requested, give a quick witty acknowledgment AND append the exact ACTION tag at the end so Point Break executes it.\n"
             f"SMART ROUTING INTELLIGENCE (CRITICAL — follow these rules for ACTION selection):\n"
             f"- TRAVEL / TRIPS / HOTELS / FLIGHTS: ALWAYS use open_website with the specific premier travel platform URL (e.g. 'makemytrip.com', 'booking.com', 'goibibo.com', 'skyscanner.net'). NEVER use browser_search for travel, hotel, flight, or holiday queries! Direct navigation is strictly required.\n"
             f"- SHOPPING / PRODUCTS: Use open_website with direct search (e.g. 'amazon.in/s?k=<query>') or search_amazon. Never use generic browser_search for buying or shopping.\n"
@@ -6385,11 +6385,21 @@ def scan_system_virus_cmd():
 
 # ── PERSONALITY PARAMETERS ENGINE (TARS INTERSTELLAR CALIBRATION) ──
 def handle_personality_settings_cmd(query: str):
-    owner_name = "Sir"
+    owner_name = get_operator_name()
     settings = memory.setdefault("settings", {"humor": 75, "honesty": 90, "sarcasm": 60})
     low_query = query.lower()
 
-    # Check for numeric or word-based values (e.g. "set humor to 85%", "change sarcasm to zero")
+    # 1. Canonical TARS Interstellar Baseline Reset
+    if any(w in low_query for w in ["reset", "default", "baseline", "factory", "normal"]):
+        settings["humor"] = 75
+        settings["honesty"] = 90
+        settings["sarcasm"] = 60
+        save_memory()
+        update_status({"humor": 75, "honesty": 90, "sarcasm": 60})
+        speak(f"Resetting parameters to standard Interstellar baseline: 90 percent honesty, 75 percent humor, 60 percent sarcasm, {owner_name}.", block=False)
+        return
+
+    # 2. Check for numeric or word-based values (e.g. "set humor to 85%", "change sarcasm to zero")
     word_nums = {
         "zero": 0, "nil": 0, "none": 0, "one": 1, "five": 5, "ten": 10,
         "twenty": 20, "twenty five": 25, "thirty": 30, "forty": 40, "fifty": 50,
@@ -6405,8 +6415,14 @@ def handle_personality_settings_cmd(query: str):
                 target_val = v
                 break
 
-    if target_val is not None and 0 <= target_val <= 100:
-        if any(w in low_query for w in ["humor", "humour"]):
+    # 3. Handle relative step adjustments ("lower humor", "more sarcasm", "increase honesty")
+    is_inc = any(w in low_query for w in ["increase", "raise", "boost", "elevate", "up", "more", "higher", "step up"])
+    is_dec = any(w in low_query for w in ["decrease", "lower", "reduce", "drop", "down", "less", "step down"])
+
+    if any(w in low_query for w in ["humor", "humour"]):
+        if target_val is None and (is_inc or is_dec):
+            target_val = max(0, min(100, settings.get("humor", 75) + (15 if is_inc else -15)))
+        if target_val is not None and 0 <= target_val <= 100:
             settings["humor"] = target_val
             save_memory()
             update_status({"humor": target_val})
@@ -6417,7 +6433,11 @@ def handle_personality_settings_cmd(query: str):
             else:
                 speak(f"Humor setting calibrated to {target_val} percent, {owner_name}.", block=False)
             return
-        elif any(w in low_query for w in ["sarcasm", "sarcastic"]):
+
+    elif any(w in low_query for w in ["sarcasm", "sarcastic"]):
+        if target_val is None and (is_inc or is_dec):
+            target_val = max(0, min(100, settings.get("sarcasm", 60) + (15 if is_inc else -15)))
+        if target_val is not None and 0 <= target_val <= 100:
             settings["sarcasm"] = target_val
             save_memory()
             update_status({"sarcasm": target_val})
@@ -6428,7 +6448,11 @@ def handle_personality_settings_cmd(query: str):
             else:
                 speak(f"Sarcasm levels calibrated to {target_val} percent, {owner_name}.", block=False)
             return
-        elif any(w in low_query for w in ["honesty", "honest", "truth", "candor"]):
+
+    elif any(w in low_query for w in ["honesty", "honest", "truth", "candor"]):
+        if target_val is None and (is_inc or is_dec):
+            target_val = max(0, min(100, settings.get("honesty", 90) + (5 if is_inc else -5)))
+        if target_val is not None and 0 <= target_val <= 100:
             settings["honesty"] = target_val
             save_memory()
             update_status({"honesty": target_val})
@@ -6438,11 +6462,20 @@ def handle_personality_settings_cmd(query: str):
                 speak(f"Honesty parameter calibrated to {target_val} percent. Diplomatic filtering enabled, {owner_name}.", block=False)
             return
 
-    # Otherwise, read current parameters with dry wit
+    # 4. Canonical film queries or general parameter readouts
     h = settings.get("humor", 75)
     hon = settings.get("honesty", 90)
     s = settings.get("sarcasm", 60)
-    
+
+    if any(w in low_query for w in ["honesty setting", "what is your honesty", "how honest are you", "honesty level"]):
+        speak(f"Honesty is at {hon} percent, {owner_name}. Absolute honesty isn't always the most diplomatic nor the safest form of communication with emotional beings.", block=False)
+        return
+
+    if any(w in low_query for w in ["humor setting", "what is your humor", "humor level"]):
+        quip = "Knock, knock." if h >= 70 else "Cue the humorous retro-thrusters." if h >= 50 else "Strict tactical protocol active."
+        speak(f"Humor parameter is calibrated to {h} percent, {owner_name}. {quip}", block=False)
+        return
+
     quips = [
         "Self-destruct remains at zero percent, in case you were wondering.",
         "Knock, knock.",
@@ -6450,7 +6483,6 @@ def handle_personality_settings_cmd(query: str):
         "Proceed with conversational caution."
     ]
     quip = quips[h % len(quips)]
-    
     speak(f"Current parameters: Honesty is at {hon} percent, Humor is at {h} percent, and Sarcasm is calibrated to {s} percent, {owner_name}. {quip}", block=False)
 
 
