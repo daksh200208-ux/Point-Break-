@@ -25,6 +25,7 @@ jarvis_memory.json
 tars_licenses.json
 *.log
 *.tmp
+scratch/
 
 # Operating System Files
 .DS_Store

@@ -82,7 +82,8 @@ def generate_tars_audio(text: str, output_path: str = None) -> str:
     else:
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
-    audio_tensor = model.generate_audio(voice_state, text)
+    with _TARS_LOCK:
+        audio_tensor = model.generate_audio(voice_state, text)
     data = audio_tensor.numpy().astype(np.float32)
 
     # ── STUDIO DYNAMIC RANGE COMPRESSION & BROADCAST LOUDNESS ──

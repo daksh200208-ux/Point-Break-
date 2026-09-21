@@ -783,16 +783,17 @@ def _listen_for_interruption_response(timeout=4.5) -> str:
     r.phrase_threshold = 0.1
     r.non_speaking_duration = 0.3
     try:
-        with sr.Microphone() as src:
-            audio = r.listen(src, timeout=timeout, phrase_time_limit=4.0)
-            try:
-                text = r.recognize_google(audio, language="en-IN")
-            except Exception:
+        with hardware_lock:
+            with sr.Microphone() as src:
+                audio = r.listen(src, timeout=timeout, phrase_time_limit=4.0)
                 try:
-                    text = r.recognize_google(audio, language="en-US")
+                    text = r.recognize_google(audio, language="en-IN")
                 except Exception:
-                    return "none"
-            return text.lower().strip() if text else "none"
+                    try:
+                        text = r.recognize_google(audio, language="en-US")
+                    except Exception:
+                        return "none"
+                return text.lower().strip() if text else "none"
     except Exception:
         return "none"
 
@@ -883,11 +884,12 @@ def speech_worker():
         return None
 
     def play_chunk(audio_file_path):
-        global tars_speaking, speech_interrupted, hard_interrupted
+        global tars_speaking, speech_interrupted, hard_interrupted, _tars_speaking_since
         if not audio_file_path or not os.path.exists(audio_file_path) or os.path.getsize(audio_file_path) == 0:
             return False
         try:
             tars_speaking = True
+            _tars_speaking_since = time.time()
             if not pygame.mixer.get_init():
                 pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
             pygame.mixer.music.set_volume(1.0)
@@ -905,7 +907,6 @@ def speech_worker():
             print(f"  [Audio Playback Warning]: {play_err}")
             return False
         finally:
-            tars_speaking = False
             try:
                 if audio_file_path and os.path.exists(audio_file_path):
                     os.remove(audio_file_path)
@@ -928,6 +929,8 @@ def speech_worker():
             continue
 
         try:
+            tars_speaking = True
+            _tars_speaking_since = time.time()
             # Print and update status in HUD
             print(f"\n  P.O.I.N.T.  B.R.E.A.K. >  {full_text}")
             update_status({"jarvis_says": full_text, "status": "speaking"})
@@ -940,10 +943,6 @@ def speech_worker():
             else:
                 sentences = _split_into_sentences(full_text)
 
-            from concurrent.futures import ThreadPoolExecutor
-            pipeliner = ThreadPoolExecutor(max_workers=1)
-            pregen_future = None
-            pregen_idx = -1
             idx = 0
             resume_prefix = ""
 
@@ -1093,32 +1092,20 @@ def speech_worker():
                 spoke_online = False
                 generated_audio_path = None
 
-                # Check if this sentence was already synthesized in background pipeline
-                if idx == pregen_idx and pregen_future is not None:
+                fd, tmp_sent = tempfile.mkstemp(suffix=".wav", dir=JARVIS_DIR)
+                os.close(fd)
+                for attempt in range(2):
+                    if hard_interrupted:
+                        break
                     try:
-                        generated_audio_path = pregen_future.result(timeout=10.0)
+                        generated_audio_path = loop.run_until_complete(gen_audio(current_sentence, TARS_NORMAL_PITCH, TARS_NORMAL_RATE, TARS_NORMAL_VOL, tmp_sent))
                         if generated_audio_path and os.path.exists(generated_audio_path):
                             spoke_online = True
-                    except Exception as pfe:
-                        print(f"  [Pipeline Prefetch Notice]: {pfe}")
-                    pregen_future = None
-                    pregen_idx = -1
-
-                if not spoke_online:
-                    fd, tmp_sent = tempfile.mkstemp(suffix=".wav", dir=JARVIS_DIR)
-                    os.close(fd)
-                    for attempt in range(2):
-                        if hard_interrupted:
                             break
-                        try:
-                            generated_audio_path = loop.run_until_complete(gen_audio(current_sentence, TARS_NORMAL_PITCH, TARS_NORMAL_RATE, TARS_NORMAL_VOL, tmp_sent))
-                            if generated_audio_path and os.path.exists(generated_audio_path):
-                                spoke_online = True
-                                break
-                        except Exception as ge:
-                            print(f"  [Audio Gen Attempt Error]: {ge}")
-                            if attempt < 1:
-                                time.sleep(0.2)
+                    except Exception as ge:
+                        print(f"  [Audio Gen Attempt Error]: {ge}")
+                        if attempt < 1:
+                            time.sleep(0.2)
 
                 if hard_interrupted:
                     try:
@@ -1129,55 +1116,16 @@ def speech_worker():
                     except: pass
                     break
 
-                if not spoke_online:
-                    try:
-                        import pythoncom, win32com.client
-                        pythoncom.CoInitialize()
-                        tars_speaking = True
-                        speaker = win32com.client.Dispatch("SAPI.SpVoice")
-                        speaker.Speak(current_sentence)
-                        tars_speaking = False
-                    except:
-                        tars_speaking = False
-
                 if spoke_online and generated_audio_path:
                     speech_interrupted = False
                     current_spoken_chunk = current_sentence.lower()
-
-                    # PIPELINE: Trigger background synthesis of next sentence while current chunk is playing
-                    if idx + 1 < len(sentences) and not hard_interrupted:
-                        nxt_sent = sentences[idx + 1]
-                        fd_nxt, tmp_nxt = tempfile.mkstemp(suffix=".wav", dir=JARVIS_DIR)
-                        os.close(fd_nxt)
-                        def _pipeline_task(text_to_gen, out_p):
-                            p_loop = asyncio.new_event_loop()
-                            try:
-                                return p_loop.run_until_complete(gen_audio(text_to_gen, TARS_NORMAL_PITCH, TARS_NORMAL_RATE, TARS_NORMAL_VOL, out_p))
-                            finally:
-                                p_loop.close()
-                        pregen_idx = idx + 1
-                        pregen_future = pipeliner.submit(_pipeline_task, nxt_sent, tmp_nxt)
-
                     completed = play_chunk(generated_audio_path)
-                    if not completed and not speech_interrupted and not hard_interrupted:
-                        try:
-                            import pythoncom, win32com.client
-                            pythoncom.CoInitialize()
-                            tars_speaking = True
-                            speaker = win32com.client.Dispatch("SAPI.SpVoice")
-                            speaker.Speak(current_sentence)
-                            tars_speaking = False
-                        except:
-                            tars_speaking = False
                     if hard_interrupted:
                         break
                     if verbal_interrupted:
-                        # User spoke over this sentence: retry sentence index after escalating
                         continue
 
                 idx += 1
-
-            pipeliner.shutdown(wait=False)
 
             if not hard_interrupted and not verbal_interrupted:
                 interruption_strikes = 0
@@ -1186,6 +1134,7 @@ def speech_worker():
             print("Speech Worker Error:", e)
         finally:
             tars_speaking = False
+            _tars_speaking_since = 0.0
             in_interruption_handling = False
             _last_spoken_finish_time = time.time()
             if 'text' in locals() and text:
@@ -1228,49 +1177,59 @@ def _verbal_barge_in_worker():
                 time.sleep(0.06)
                 continue
 
-            with sr.Microphone() as src:
-                while tars_speaking and not speech_interrupted and not hard_interrupted and not in_interruption_handling and not mic_muted:
-                    try:
-                        audio = r.listen(src, timeout=0.6, phrase_time_limit=3.0)
-                    except sr.WaitTimeoutError:
-                        continue
-                    except Exception:
-                        break
+            if not hardware_lock.acquire(blocking=False):
+                time.sleep(0.06)
+                continue
 
-                    if not tars_speaking or speech_interrupted or hard_interrupted or in_interruption_handling:
-                        break
-
-                    # Transcribe captured audio
-                    heard_text = ""
-                    try:
-                        heard_text = r.recognize_google(audio, language="en-IN").lower().strip()
-                    except Exception:
+            try:
+                with sr.Microphone() as src:
+                    while tars_speaking and not speech_interrupted and not hard_interrupted and not in_interruption_handling and not mic_muted:
                         try:
-                            heard_text = r.recognize_google(audio, language="en-US").lower().strip()
+                            audio = r.listen(src, timeout=0.6, phrase_time_limit=3.0)
+                        except sr.WaitTimeoutError:
+                            continue
                         except Exception:
-                            heard_text = ""
+                            break
 
-                    if not heard_text:
-                        continue
+                        if not tars_speaking or speech_interrupted or hard_interrupted or in_interruption_handling:
+                            break
 
-                    # Anti-Self-Echo Filter:
-                    # Ignore if transcribed words match the currently vocalized sentence
-                    heard_words = set(re.findall(r'\w+', heard_text))
-                    spoken_words = set(re.findall(r'\w+', current_spoken_chunk.lower()))
-                    # Only external words NOT spoken by Point Break can be interrupt keywords
-                    external_words = heard_words - spoken_words
-                    has_interrupt_kw = any(kw in external_words for kw in INTERRUPT_KEYWORDS)
+                        # Transcribe captured audio
+                        heard_text = ""
+                        try:
+                            heard_text = r.recognize_google(audio, language="en-IN").lower().strip()
+                        except Exception:
+                            try:
+                                heard_text = r.recognize_google(audio, language="en-US").lower().strip()
+                            except Exception:
+                                heard_text = ""
 
-                    if heard_words and spoken_words:
-                        overlap = len(heard_words.intersection(spoken_words)) / len(heard_words)
-                        if overlap > 0.35 and not has_interrupt_kw:
-                            # Speaker bleed / echo detected — ignore
+                        if not heard_text:
                             continue
 
-                    print(f"\n  🎤 [Verbal Barge-In Detected]: '{heard_text}'")
-                    interruption_strikes += 1
-                    stop_speech(hard=False)
-                    break
+                        # Anti-Self-Echo Filter:
+                        # Ignore if transcribed words match the currently vocalized sentence
+                        heard_words = set(re.findall(r'\w+', heard_text))
+                        spoken_words = set(re.findall(r'\w+', current_spoken_chunk.lower()))
+                        # Only external words NOT spoken by Point Break can be interrupt keywords
+                        external_words = heard_words - spoken_words
+                        has_interrupt_kw = any(kw in external_words for kw in INTERRUPT_KEYWORDS)
+
+                        if heard_words and spoken_words:
+                            overlap = len(heard_words.intersection(spoken_words)) / len(heard_words)
+                            if overlap > 0.35 and not has_interrupt_kw:
+                                # Speaker bleed / echo detected — ignore
+                                continue
+
+                        print(f"\n  🎤 [Verbal Barge-In Detected]: '{heard_text}'")
+                        interruption_strikes += 1
+                        stop_speech(hard=False)
+                        break
+            finally:
+                try:
+                    hardware_lock.release()
+                except Exception:
+                    pass
         except Exception:
             time.sleep(0.1)
 
@@ -2178,17 +2137,18 @@ def take_command(timeout=None):
     listen_timeout = timeout
         
     try:
-        with sr.Microphone() as src:
-            if not tars_speaking:
-                print("  🎤 Listening...", flush=True)
-                update_status({"status": "listening"})
-            # Dynamic calibration: adapt to current room noise floor (measured 180-220)
-            try:
-                r.adjust_for_ambient_noise(src, duration=0.20)
-            except Exception:
-                pass
-            r.energy_threshold = max(200.0, r.energy_threshold * 1.15)
-            audio = r.listen(src, timeout=listen_timeout, phrase_time_limit=10)
+        with hardware_lock:
+            with sr.Microphone() as src:
+                if not tars_speaking:
+                    print("  🎤 Listening...", flush=True)
+                    update_status({"status": "listening"})
+                # Dynamic calibration: adapt to current room noise floor (measured 180-220)
+                try:
+                    r.adjust_for_ambient_noise(src, duration=0.20)
+                except Exception:
+                    pass
+                r.energy_threshold = max(200.0, r.energy_threshold * 1.15)
+                audio = r.listen(src, timeout=listen_timeout, phrase_time_limit=10)
             
             try:
                 q = r.recognize_google(audio, language="en-IN")
@@ -2274,13 +2234,14 @@ def wait_for_wake():
             time.sleep(0.5)
             continue
         try:
-            with sr.Microphone() as src:
-                try:
-                    r.adjust_for_ambient_noise(src, duration=0.20)
-                except Exception:
-                    pass
-                r.energy_threshold = max(200.0, r.energy_threshold * 1.15)
-                audio = r.listen(src, timeout=6, phrase_time_limit=6)
+            with hardware_lock:
+                with sr.Microphone() as src:
+                    try:
+                        r.adjust_for_ambient_noise(src, duration=0.20)
+                    except Exception:
+                        pass
+                    r.energy_threshold = max(200.0, r.energy_threshold * 1.15)
+                    audio = r.listen(src, timeout=6, phrase_time_limit=6)
                 try:
                     text = r.recognize_google(audio, language="en-IN").lower().strip()
                 except Exception:
@@ -10497,20 +10458,22 @@ def play_wake_response():
             os.makedirs(_wake_cache_dir, exist_ok=True)
             generate_tars_audio(phrase, cached_path)
             if os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
-                tars_speaking = True
-                if not pygame.mixer.get_init():
-                    pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
-                pygame.mixer.music.load(cached_path)
-                pygame.mixer.music.play()
-                while pygame.mixer.music.get_busy() and tars_speaking and not speech_interrupted:
-                    time.sleep(0.02)
                 try:
-                    pygame.mixer.music.stop()
-                    pygame.mixer.music.unload()
-                except Exception:
-                    pass
-                tars_speaking = False
-                played_instant = True
+                    tars_speaking = True
+                    if not pygame.mixer.get_init():
+                        pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+                    pygame.mixer.music.load(cached_path)
+                    pygame.mixer.music.play()
+                    while pygame.mixer.music.get_busy() and tars_speaking and not speech_interrupted:
+                        time.sleep(0.02)
+                    try:
+                        pygame.mixer.music.stop()
+                        pygame.mixer.music.unload()
+                    except Exception:
+                        pass
+                    played_instant = True
+                finally:
+                    tars_speaking = False
         except Exception:
             pass
 
