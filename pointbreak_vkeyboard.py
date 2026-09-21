@@ -145,12 +145,14 @@ class HolographicAirKeyboard:
         self.key_rects["[✕]"] = (self.win_w - 42, 3, self.win_w - 10, 22)
 
     def start_in_background(self):
-        """Starts the Tkinter UI event loop in a dedicated background thread."""
-        self._ui_thread = threading.Thread(target=self._run_ui_loop, daemon=True)
-        self._ui_thread.start()
-        self._ready_event.wait(timeout=3.0)
-        self._bind_hotkeys()
-        print("[Air-Keyboard] ⚡ Holographic Air-Keyboard Engine Initialized (i3 Turbo Edition).")
+        """Starts the Holographic Air-Keyboard in an isolated subprocess to guarantee 100% process stability."""
+        try:
+            import subprocess
+            vkey_script = os.path.abspath(__file__)
+            subprocess.Popen([sys.executable, vkey_script], creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            print("[Air-Keyboard] ⚡ Holographic Air-Keyboard Engine Initialized in isolated runtime.")
+        except Exception as e:
+            print(f"[Air-Keyboard] Process dispatch error: {e}")
 
     def _bind_hotkeys(self):
         if keyboard:
@@ -515,3 +517,7 @@ def check_is_text_input_focused() -> bool:
         pass
 
     return False
+    
+if __name__ == "__main__":
+    vkeyboard_engine._bind_hotkeys()
+    vkeyboard_engine._run_ui_loop()

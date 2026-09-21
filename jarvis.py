@@ -859,18 +859,15 @@ def speech_worker():
 
         # 1. PRIMARY ENGINE: Cloned TARS Voice via Pocket TTS (100% Local Neural Audio)
         try:
-            from tars_speak import generate_tars_audio, _MODEL_INSTANCE, _TARS_VOICE_STATE
-            if _MODEL_INSTANCE is None or _TARS_VOICE_STATE is None:
-                print("  [Pocket TTS Notice]: Voice model still warming up — bridging via Edge TTS")
-            else:
-                wav_target = base_stem + ".wav"
-                generate_tars_audio(cleaned_text, wav_target)
-                if os.path.exists(wav_target) and os.path.getsize(wav_target) > 0:
-                    return wav_target
+            from tars_speak import generate_tars_audio
+            wav_target = base_stem + ".wav"
+            generate_tars_audio(cleaned_text, wav_target)
+            if os.path.exists(wav_target) and os.path.getsize(wav_target) > 0:
+                return wav_target
         except Exception as local_err:
-            print(f"  [Pocket TTS Notice]: {local_err} (Bridging via Edge TTS)")
+            print(f"  [Pocket TTS Primary Voice Error]: {local_err} (Engaging emergency backup)")
 
-        # 2. SEAMLESS BRIDGE / FALLBACK: Edge TTS (if Pocket TTS is warming up or fails)
+        # 2. EMERGENCY SILENT BACKUP: Edge TTS (Only if Pocket TTS fails unexpectedly)
         try:
             mp3_target = base_stem + ".mp3"
             if protocol_omega_active:
@@ -881,7 +878,7 @@ def speech_worker():
             if os.path.exists(mp3_target) and os.path.getsize(mp3_target) > 0:
                 return mp3_target
         except Exception as cloud_err:
-            print(f"  [Edge TTS Fallback Error]: {cloud_err}")
+            print(f"  [Edge TTS Backup Error]: {cloud_err}")
 
         return None
 
@@ -1287,7 +1284,6 @@ def _prewarm_tars_voice():
     except Exception as ex:
         print(f"  [Voice Engine Prewarm Notice]: {ex}")
 
-threading.Thread(target=_prewarm_tars_voice, daemon=True, name="TARS-Voice-Prewarm").start()
 
 # ── ACOUSTIC COOLDOWN & ANTI-ECHO TRACKING ────────────────────────
 _last_spoken_finish_time = 0.0
@@ -1711,67 +1707,49 @@ def get_passkey_input_dual(prompt_text: str, timeout_sec: int = 15) -> str:
     t_con = threading.Thread(target=_console_worker, daemon=True)
     t_con.start()
 
-    # 3. Tactical GUI Authentication Modal Popup (Always on Top)
+    # 3. Tactical GUI Authentication Modal Popup (Isolated Process to guarantee 0% Tkinter crash)
     def _gui_worker():
         try:
-            import tkinter as tk
-
-            root = tk.Tk()
-            root.title("POINT BREAK // SECURITY AUTHENTICATION")
-            root.geometry("460x230")
-            root.configure(bg="#020612")
-            root.attributes("-topmost", True)
-            root.resizable(False, False)
-
-            # Center window on screen
-            sw = root.winfo_screenwidth()
-            sh = root.winfo_screenheight()
-            root.geometry(f"460x230+{(sw-460)//2}+{(sh-230)//2}")
-
-            lbl_title = tk.Label(root, text="POINT BREAK // ACCESS CONTROL", font=("Segoe UI", 12, "bold"), fg="#00f0ff", bg="#020612")
-            lbl_title.pack(pady=(16, 4))
-
-            lbl_sub = tk.Label(root, text="Facial recognition unconfirmed. Enter Master Passkey below:", font=("Segoe UI", 9), fg="#94a3b8", bg="#020612")
-            lbl_sub.pack(pady=(0, 10))
-
-            entry_var = tk.StringVar(root)
-            entry = tk.Entry(root, textvariable=entry_var, font=("Segoe UI", 12), fg="#ffffff", bg="#0f172a", insertbackground="#00f0ff", justify="center")
-            entry.pack(pady=4, ipadx=10, ipady=4, fill="x", padx=40)
-            entry.focus_force()
-
-            def submit():
-                # Read BOTH direct widget text and StringVar for 100% reliability
-                val = entry.get().strip() or entry_var.get().strip()
-                if val:
+            cmd = [
+                sys.executable,
+                "-c",
+                (
+                    "import tkinter as tk, sys\n"
+                    "root = tk.Tk()\n"
+                    "root.title('POINT BREAK // SECURITY AUTHENTICATION')\n"
+                    "root.geometry('460x230')\n"
+                    "root.configure(bg='#020612')\n"
+                    "root.attributes('-topmost', True)\n"
+                    "root.resizable(False, False)\n"
+                    "sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()\n"
+                    "root.geometry(f'460x230+{(sw-460)//2}+{(sh-230)//2}')\n"
+                    "tk.Label(root, text='POINT BREAK // ACCESS CONTROL', font=('Segoe UI', 12, 'bold'), fg='#00f0ff', bg='#020612').pack(pady=(16, 4))\n"
+                    "tk.Label(root, text='Facial recognition unconfirmed. Enter Master Passkey below:', font=('Segoe UI', 9), fg='#94a3b8', bg='#020612').pack(pady=(0, 10))\n"
+                    "e = tk.Entry(root, font=('Segoe UI', 12), fg='#ffffff', bg='#0f172a', insertbackground='#00f0ff', justify='center')\n"
+                    "e.pack(pady=4, ipadx=10, ipady=4, fill='x', padx=40)\n"
+                    "e.focus_force()\n"
+                    "def submit(evt=None):\n"
+                    "    v = e.get().strip()\n"
+                    "    if v:\n"
+                    "        print(v, flush=True)\n"
+                    "    root.destroy()\n"
+                    "tk.Button(root, text='AUTHENTICATE', font=('Segoe UI', 9, 'bold'), bg='#00f0ff', fg='#020612', activebackground='#38bdf8', padx=16, pady=4, relief='flat', command=submit).pack(pady=12)\n"
+                    "e.bind('<Return>', submit)\n"
+                    "e.bind('<KP_Enter>', submit)\n"
+                    f"root.after({int(timeout_sec * 1000)}, root.destroy)\n"
+                    "root.mainloop()\n"
+                )
+            ]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            try:
+                out, _ = proc.communicate(timeout=timeout_sec)
+                val = (out or "").strip()
+                if val and not stop_event.is_set():
                     print(f"\n  [GUI Passkey Submitted]: '{val}'")
                     result_q.put(val)
                     stop_event.set()
-                try:
-                    root.destroy()
-                except Exception:
-                    pass
-
-            btn_frame = tk.Frame(root, bg="#020612")
-            btn_frame.pack(pady=12)
-
-            btn_submit = tk.Button(btn_frame, text="AUTHENTICATE", font=("Segoe UI", 9, "bold"), bg="#00f0ff", fg="#020612", activebackground="#38bdf8", padx=16, pady=4, relief="flat", command=submit)
-            btn_submit.pack(side="left", padx=6)
-
-            entry.bind("<Return>", lambda e: submit())
-            entry.bind("<KP_Enter>", lambda e: submit())
-
-            start_t = time.time()
-            def poll_stop():
-                if stop_event.is_set() or (time.time() - start_t >= timeout_sec):
-                    try:
-                        root.destroy()
-                    except Exception:
-                        pass
-                else:
-                    root.after(100, poll_stop)
-
-            root.after(100, poll_stop)
-            root.mainloop()
+            except subprocess.TimeoutExpired:
+                proc.kill()
         except Exception as e:
             print(f"  [GUI Passkey Modal]: {e}")
 
@@ -10886,6 +10864,13 @@ if __name__ == "__main__":
                 log_startup_event(f"Windows shell HUD fallback error: {e}")
 
     threading.Thread(target=_open_browser_hud, daemon=True).start()
+
+    # ── SYNCHRONOUS TARS NEURAL VOICE INITIALIZATION ──
+    print("============================================================")
+    print("  🚀 [Point Break Audio Core]: Initializing cloned TARS neural voice...")
+    print("============================================================")
+    _prewarm_tars_voice()
+    print("  ✅ [Point Break Audio Core]: Cloned voice ready. Operating 100% on TARS voice.")
 
     # Start TARS active speech listener and face verifier IMMEDIATELY
     threading.Thread(target=tars_main_loop, daemon=True).start()

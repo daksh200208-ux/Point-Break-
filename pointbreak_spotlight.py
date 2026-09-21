@@ -27,11 +27,14 @@ class SpotlightPalette:
         self._ready_event = threading.Event()
 
     def start_in_background(self):
-        """Starts the Tkinter UI event loop in a dedicated thread."""
-        self._tk_thread = threading.Thread(target=self._run_ui, daemon=True)
-        self._tk_thread.start()
-        self._ready_event.wait(timeout=3.0)
-        self._bind_global_hotkey()
+        """Starts the Spotlight Palette in an isolated subprocess to ensure 100% process & UI thread safety."""
+        try:
+            import subprocess
+            spotlight_script = os.path.abspath(__file__)
+            subprocess.Popen([sys.executable, spotlight_script], creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            print("[Spotlight] 🛸 Global hotkey 'Alt + Space' active in isolated runtime.")
+        except Exception as e:
+            print(f"[Spotlight] Process spawn error: {e}")
 
     def _run_ui(self):
         self.root = tk.Tk()
@@ -120,9 +123,21 @@ class SpotlightPalette:
     def _on_submit(self, event=None):
         cmd = self.entry.get().strip()
         self.hide()
-        if cmd and self.callback:
+        if cmd:
             print(f"[Spotlight] Dispatched directive: '{cmd}'")
-            threading.Thread(target=self.callback, args=(cmd,), daemon=True).start()
+            if self.callback:
+                threading.Thread(target=self.callback, args=(cmd,), daemon=True).start()
+            else:
+                try:
+                    import urllib.request, urllib.parse
+                    url = f"http://127.0.0.1:8000/api/command?query={urllib.parse.quote(cmd)}"
+                    urllib.request.urlopen(url, timeout=2.0)
+                except Exception as ex:
+                    print(f"[Spotlight] HTTP dispatch error: {ex}")
 
 # Global instance
 spotlight_engine = SpotlightPalette()
+
+if __name__ == "__main__":
+    spotlight_engine._bind_global_hotkey()
+    spotlight_engine._run_ui()
