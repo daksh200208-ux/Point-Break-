@@ -707,6 +707,7 @@ current_spoken_chunk = ""
 interruption_strikes = 0
 verbal_interrupted = False
 hard_interrupted = False
+in_interruption_handling = False
 
 def stop_speech(hard=True):
     """
@@ -714,12 +715,13 @@ def stop_speech(hard=True):
     If hard=True (Physical Right Ctrl pressed), speech is completely cancelled and queue cleared with 0 quips.
     If hard=False (Verbal interruption during speech), playback pauses/stops to engage TARS escalation.
     """
-    global tars_speaking, speech_interrupted, hard_interrupted, verbal_interrupted, interruption_strikes
+    global tars_speaking, speech_interrupted, hard_interrupted, verbal_interrupted, interruption_strikes, in_interruption_handling
     speech_interrupted = True
     if hard:
         hard_interrupted = True
         verbal_interrupted = False
         interruption_strikes = 0
+        in_interruption_handling = False
     else:
         verbal_interrupted = True
 
@@ -748,6 +750,46 @@ def stop_speech(hard=True):
     tars_speaking = False
     update_status({"status": "idle"})
 
+def _listen_for_interruption_response(timeout=4.5) -> str:
+    """
+    Listens on the microphone for Daksh's immediate verbal response after Point Break asks
+    'Can I finish, Sir?' or raises voice. Captures apologies, affirmations, or further speech.
+    """
+    r = sr.Recognizer()
+    r.dynamic_energy_threshold = False
+    r.energy_threshold = 30
+    r.pause_threshold = 0.5
+    r.phrase_threshold = 0.1
+    r.non_speaking_duration = 0.3
+    try:
+        with sr.Microphone() as src:
+            audio = r.listen(src, timeout=timeout, phrase_time_limit=4.0)
+            try:
+                text = r.recognize_google(audio, language="en-IN")
+            except Exception:
+                try:
+                    text = r.recognize_google(audio, language="en-US")
+                except Exception:
+                    return "none"
+            return text.lower().strip() if text else "none"
+    except Exception:
+        return "none"
+
+def _is_interruption_apology(text: str) -> bool:
+    """
+    Determines if user input represents an apology or green light to continue.
+    """
+    if not text or text == "none":
+        return False
+    t = text.lower().strip()
+    apology_tokens = [
+        "sorry", "i am sorry", "i'm sorry", "im sorry", "my bad", "apologies", "apologize",
+        "go ahead", "go on", "continue", "please finish", "finish", "carry on",
+        "speak", "proceed", "yes", "yeah", "ok", "okay", "sure", "alright", "all right",
+        "my fault", "pardon", "take your time"
+    ]
+    return any(p in t for p in apology_tokens)
+
 def _split_into_sentences(text: str):
     """Splits text into natural conversational sentence chunks."""
     raw_chunks = re.split(r'(?<=[.!?])\s+|\n+', text)
@@ -757,7 +799,7 @@ def _split_into_sentences(text: str):
     return sentences
 
 def speech_worker():
-    global tars_speaking, current_spoken_chunk, speech_interrupted, hard_interrupted, verbal_interrupted, interruption_strikes
+    global tars_speaking, current_spoken_chunk, speech_interrupted, hard_interrupted, verbal_interrupted, interruption_strikes, in_interruption_handling
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
@@ -852,14 +894,16 @@ def speech_worker():
                 if verbal_interrupted:
                     speech_interrupted = False
                     verbal_interrupted = False
+                    in_interruption_handling = True
 
                     if interruption_strikes == 1:
                         warn_options = [
-                            "Excuse me, can I finish, sir?",
-                            "Excuse me, can I finish, sir? My humor parameter is 85 percent, but my patience parameter is zero.",
+                            "Excuse me, can I finish, Sir?",
+                            "Excuse me, Sir, may I finish what I was saying?",
+                            "Can I finish, Sir? My humor parameter is 85 percent, but my patience parameter is zero.",
                             "Sir, allow me to complete the sentence."
                         ]
-                        warn_line = warn_options[0] if len(sentences) <= 2 else warn_options[1]
+                        warn_line = random.choice(warn_options)
                         print(f"\n  ⚠️  P.O.I.N.T.  B.R.E.A.K. >  {warn_line}")
                         fd, tmp_warn = tempfile.mkstemp(suffix=".mp3", dir=JARVIS_DIR)
                         os.close(fd)
@@ -868,21 +912,106 @@ def speech_worker():
                             play_chunk(tmp_warn)
                         except Exception as ex:
                             print(f"  [TTS Warn Error]: {ex}")
-                        time.sleep(0.15)
+
+                        if hard_interrupted:
+                            in_interruption_handling = False
+                            break
+
+                        # Listen for Daksh's response / apology
+                        print("  🎤 Point Break is listening for response (apology / go ahead)...")
+                        user_resp = _listen_for_interruption_response(timeout=4.5)
+                        print(f"  [Interruption Response]: '{user_resp}'")
+
+                        if hard_interrupted:
+                            in_interruption_handling = False
+                            break
+
+                        if _is_interruption_apology(user_resp):
+                            interruption_strikes = 0
+                            ack_options = [
+                                "Thank you, Sir. As I was saying...",
+                                "Much obliged, Sir. Continuing...",
+                                "Apology accepted. As I was saying...",
+                                "Thank you, Sir. Now, let me finish..."
+                            ]
+                            ack_line = random.choice(ack_options)
+                            print(f"\n  ✅  P.O.I.N.T.  B.R.E.A.K. >  {ack_line}")
+                            fd_ack, tmp_ack = tempfile.mkstemp(suffix=".mp3", dir=JARVIS_DIR)
+                            os.close(fd_ack)
+                            try:
+                                loop.run_until_complete(gen_audio(ack_line, TARS_NORMAL_PITCH, TARS_NORMAL_RATE, TARS_NORMAL_VOL, tmp_ack))
+                                play_chunk(tmp_ack)
+                            except Exception as ex:
+                                print(f"  [TTS Ack Error]: {ex}")
+                            resume_prefix = ""
+                        elif user_resp and user_resp != "none":
+                            # Spoke back without apologizing or cut off again
+                            interruption_strikes += 1
+                            shout_line = "DO NOT CUT ME OFF, SIR! Allow me to finish!"
+                            print(f"\n  🔥  P.O.I.N.T.  B.R.E.A.K. >  {shout_line} (BOOMING ANGER)")
+                            fd_shout, tmp_shout = tempfile.mkstemp(suffix=".mp3", dir=JARVIS_DIR)
+                            os.close(fd_shout)
+                            try:
+                                loop.run_until_complete(gen_audio(shout_line, TARS_SHOUT_PITCH, TARS_SHOUT_RATE, TARS_SHOUT_VOL, tmp_shout))
+                                play_chunk(tmp_shout)
+                            except Exception as ex:
+                                print(f"  [TTS Shout Error]: {ex}")
+
+                            second_resp = _listen_for_interruption_response(timeout=4.0)
+                            if _is_interruption_apology(second_resp):
+                                interruption_strikes = 0
+                                ack_line = "Thank you, Sir. Now, let me finish."
+                                print(f"\n  ✅  P.O.I.N.T.  B.R.E.A.K. >  {ack_line}")
+                                fd_ack, tmp_ack = tempfile.mkstemp(suffix=".mp3", dir=JARVIS_DIR)
+                                os.close(fd_ack)
+                                try:
+                                    loop.run_until_complete(gen_audio(ack_line, TARS_NORMAL_PITCH, TARS_NORMAL_RATE, TARS_NORMAL_VOL, tmp_ack))
+                                    play_chunk(tmp_ack)
+                                except Exception: pass
+                                resume_prefix = ""
+                            else:
+                                resume_prefix = "Now, as I was saying, "
+                        else:
+                            # Silence / yielded floor
+                            resume_prefix = "As I was saying, "
 
                     elif interruption_strikes >= 2:
-                        shout_line = "DO NOT CUT ME OFF, SIR!"
+                        shout_options = [
+                            "DO NOT CUT ME OFF, SIR! Allow me to finish!",
+                            "Sir! Please do not cut me off, allow me to complete my thought!",
+                            "Daksh! Cutting me off repeatedly is counterproductive. Allow me to complete."
+                        ]
+                        shout_line = random.choice(shout_options)
                         print(f"\n  🔥  P.O.I.N.T.  B.R.E.A.K. >  {shout_line} (BOOMING ANGER)")
-                        fd, tmp_shout = tempfile.mkstemp(suffix=".mp3", dir=JARVIS_DIR)
-                        os.close(fd)
+                        fd_shout, tmp_shout = tempfile.mkstemp(suffix=".mp3", dir=JARVIS_DIR)
+                        os.close(fd_shout)
                         try:
                             loop.run_until_complete(gen_audio(shout_line, TARS_SHOUT_PITCH, TARS_SHOUT_RATE, TARS_SHOUT_VOL, tmp_shout))
                             play_chunk(tmp_shout)
                         except Exception as ex:
                             print(f"  [TTS Shout Error]: {ex}")
-                        time.sleep(0.2)
-                        resume_prefix = "As I was saying, "
 
+                        if hard_interrupted:
+                            in_interruption_handling = False
+                            break
+
+                        print("  🎤 Point Break is listening for compliance...")
+                        user_resp = _listen_for_interruption_response(timeout=4.5)
+                        if _is_interruption_apology(user_resp):
+                            interruption_strikes = 0
+                            ack_line = "Thank you, Sir. Now, let me finish."
+                            print(f"\n  ✅  P.O.I.N.T.  B.R.E.A.K. >  {ack_line}")
+                            fd_ack, tmp_ack = tempfile.mkstemp(suffix=".mp3", dir=JARVIS_DIR)
+                            os.close(fd_ack)
+                            try:
+                                loop.run_until_complete(gen_audio(ack_line, TARS_NORMAL_PITCH, TARS_NORMAL_RATE, TARS_NORMAL_VOL, tmp_ack))
+                                play_chunk(tmp_ack)
+                            except Exception: pass
+                            resume_prefix = ""
+                        else:
+                            resume_prefix = "Now, as I was saying, "
+
+                    in_interruption_handling = False
                     if hard_interrupted:
                         break
 
@@ -925,6 +1054,7 @@ def speech_worker():
 
                 if spoke_online:
                     speech_interrupted = False
+                    current_spoken_chunk = current_sentence.lower()
                     completed = play_chunk(tmp_sent)
                     if hard_interrupted:
                         break
@@ -941,6 +1071,7 @@ def speech_worker():
             print("Speech Worker Error:", e)
         finally:
             tars_speaking = False
+            in_interruption_handling = False
             _last_spoken_finish_time = time.time()
             if 'text' in locals() and text:
                 _last_spoken_history.append(str(text).lower().strip())
@@ -953,6 +1084,80 @@ def speech_worker():
 
 # Start Speech Worker thread immediately on boot
 threading.Thread(target=speech_worker, daemon=True).start()
+
+def _verbal_barge_in_worker():
+    """
+    Continuous background monitor that detects Daksh speaking over Point Break in real time.
+    Incorporates acoustic anti-self-echo filtering and triggers conversational escalation.
+    """
+    global tars_speaking, speech_interrupted, hard_interrupted, verbal_interrupted
+    global interruption_strikes, in_interruption_handling, mic_muted, current_spoken_chunk
+
+    r = sr.Recognizer()
+    r.dynamic_energy_threshold = False
+    r.energy_threshold = 45
+    r.pause_threshold = 0.35
+    r.phrase_threshold = 0.05
+    r.non_speaking_duration = 0.2
+
+    INTERRUPT_KEYWORDS = [
+        "wait", "stop", "listen", "hey", "point", "break", "excuse", "shut",
+        "sorry", "no", "hold", "quiet", "daksh", "jarvis", "cut", "hello",
+        "pause", "hang on", "shh", "enough"
+    ]
+
+    while True:
+        try:
+            # Only monitor mic when Point Break is actively speaking and not already in interruption handling
+            if not tars_speaking or mic_muted or hard_interrupted or speech_interrupted or in_interruption_handling:
+                time.sleep(0.06)
+                continue
+
+            with sr.Microphone() as src:
+                while tars_speaking and not speech_interrupted and not hard_interrupted and not in_interruption_handling and not mic_muted:
+                    try:
+                        audio = r.listen(src, timeout=0.6, phrase_time_limit=3.0)
+                    except sr.WaitTimeoutError:
+                        continue
+                    except Exception:
+                        break
+
+                    if not tars_speaking or speech_interrupted or hard_interrupted or in_interruption_handling:
+                        break
+
+                    # Transcribe captured audio
+                    heard_text = ""
+                    try:
+                        heard_text = r.recognize_google(audio, language="en-IN").lower().strip()
+                    except Exception:
+                        try:
+                            heard_text = r.recognize_google(audio, language="en-US").lower().strip()
+                        except Exception:
+                            heard_text = ""
+
+                    if not heard_text:
+                        continue
+
+                    # Anti-Self-Echo Filter:
+                    # Ignore if transcribed words match the currently vocalized sentence
+                    heard_words = set(re.findall(r'\w+', heard_text))
+                    spoken_words = set(re.findall(r'\w+', current_spoken_chunk.lower()))
+                    has_interrupt_kw = any(kw in heard_text for kw in INTERRUPT_KEYWORDS)
+
+                    if heard_words and spoken_words:
+                        overlap = len(heard_words.intersection(spoken_words)) / len(heard_words)
+                        if overlap > 0.50 and not has_interrupt_kw:
+                            # Speaker bleed / echo detected — ignore
+                            continue
+
+                    print(f"\n  🎤 [Verbal Barge-In Detected]: '{heard_text}'")
+                    interruption_strikes += 1
+                    stop_speech(hard=False)
+                    break
+        except Exception:
+            time.sleep(0.1)
+
+threading.Thread(target=_verbal_barge_in_worker, daemon=True, name="Verbal-Barge-In-Worker").start()
 
 def _prewarm_tars_voice():
     try:
@@ -1798,15 +2003,15 @@ def lock_workstation_lockdown():
     ctypes.windll.user32.LockWorkStation()
 
 def take_command(timeout=None):
-    global mic_muted, tars_speaking, current_spoken_chunk, interruption_strikes
+    global mic_muted, tars_speaking, current_spoken_chunk, interruption_strikes, in_interruption_handling
     global _last_spoken_finish_time, _last_spoken_history, _last_user_query, _last_user_query_time
 
     if mic_muted:
         time.sleep(0.3)
         return "none"
 
-    # Acoustic Clearance: Do NOT listen while Point Break is speaking or immediately after (0.85s reverb window)
-    if tars_speaking or (time.time() - _last_spoken_finish_time < 0.85):
+    # Acoustic Clearance: Do NOT listen while Point Break is speaking, handling an interruption, or immediately after (0.85s reverb window)
+    if tars_speaking or in_interruption_handling or (time.time() - _last_spoken_finish_time < 0.85):
         time.sleep(0.2)
         return "none"
         
