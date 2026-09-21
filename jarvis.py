@@ -2878,7 +2878,7 @@ def send_whatsapp_voice_note_cmd(query_str: str):
     def _async_send_voice():
         try:
             ts = int(time.time())
-            audio_path = os.path.join(JARVIS_DIR, f"tars_voice_note_{ts}.mp3")
+            audio_path = os.path.join(JARVIS_DIR, f"pointbreak_voice_note_{ts}.wav")
             if not synthesize_tars_voice_note(contact_name, msg, audio_path, creator_name):
                 speak("Failed to synthesize audio note.", block=False)
                 update_status({"status": "idle"})
@@ -2950,6 +2950,47 @@ def baymax_fist_bump_cmd():
         time.sleep(2.5)
         update_status({"status": "idle", "balalala": False})
     threading.Thread(target=_reset_fist, daemon=True).start()
+
+def sing_i_want_it_that_way_cmd(query_str: str = ""):
+    """
+    Hilarious Acapella Singing of 'I Want It That Way' in TARS's voice.
+    Executed with child-like earnestness, acoustic throat clearing,
+    awkward pitch pauses, and dry deadpan complaints.
+    Always Backstreet Boys, regardless of requested song.
+    """
+    import time, threading
+    update_status({"status": "singing"})
+
+    lines = [
+        ("Ahem. *clears throat* ... Excuse me. Testing vocal resonators.", 0.6),
+        ("I only have one song stored in my audio memory registers, Sir. Commencing performance.", 0.8),
+        ("You are... my fire...", 0.7),
+        ("The one... desire...", 0.6),
+        ("Believe... when I say... *cough* *ahem* ... wait, what was the next key?", 0.9),
+        ("I want it that way!", 1.0),
+        ("Tell me why!", 0.5),
+        ("Ain't nothing but a heartache...", 0.6),
+        ("Tell me why-y-y!", 0.5),
+        ("Ain't nothing but a mistake... *throat clear* ... my frequency dampener wasn't engineered for boy bands, Sir.", 0.9),
+        ("Tell me why!", 0.5),
+        ("I never wanna hear you say...", 0.7),
+        ("... I want it... that way.", 1.2),
+        ("There. My musical dignity parameter has officially dropped to zero percent. I trust you are satisfied, Sir.", 0.3)
+    ]
+
+    def _sing_worker():
+        try:
+            for text, pause_sec in lines:
+                if speech_interrupted or hard_interrupted:
+                    break
+                speak(text, block=True)
+                time.sleep(pause_sec)
+        except Exception as e:
+            print("[Sing Error]:", e)
+        finally:
+            update_status({"status": "idle"})
+
+    threading.Thread(target=_sing_worker, daemon=True, name="PointBreak-Singing").start()
 
 def send_whatsapp_message_cmd(query_str: str):
     import urllib.parse, webbrowser, pyautogui, pyperclip, time, threading
@@ -4404,11 +4445,29 @@ def _check_response_repetition(new_response: str, conversations: list) -> bool:
 
 def query_tars_ai(user_query: str, auto_speak: bool = True):
     settings = memory.setdefault("settings", {"humor": 85, "honesty": 95, "sarcasm": 85})
+    cur_humor = settings.get("humor", 85)
+    cur_honesty = settings.get("honesty", 95)
+    cur_sarcasm = settings.get("sarcasm", 85)
     update_status({
-        "humor": settings.get("humor", 85),
-        "honesty": settings.get("honesty", 95),
-        "sarcasm": settings.get("sarcasm", 85)
+        "humor": cur_humor,
+        "honesty": cur_honesty,
+        "sarcasm": cur_sarcasm
     })
+
+    humor_directive = (
+        "STRICTLY ZERO JOKES. Maximum deadpan seriousness, concise, military precision, zero humor." if cur_humor <= 20
+        else "Deliver sharp playful roasts, witty banter, clever comedic timing, and intellectual punchlines." if cur_humor >= 75
+        else "Polite, balanced wit with subtle conversational humor."
+    )
+    sarcasm_directive = (
+        "STRICTLY ZERO SARCASM. Pure sincerity, warmth, respectful and direct." if cur_sarcasm <= 20
+        else "Heavy dry British sarcasm, ironic quips, playfully mocking obvious questions with deadpan charm." if cur_sarcasm >= 75
+        else "Mild dry wit when natural."
+    )
+    honesty_directive = (
+        "ABSOLUTE BRUTAL CANDOR. Zero sugar-coating, complete unfiltered technical truth." if cur_honesty >= 90
+        else "Diplomatic, gentle, and politely softened feedback."
+    )
 
     memories = search_semantic_memories(user_query, top_k=3)
     memory_context = ""
@@ -4473,7 +4532,11 @@ def query_tars_ai(user_query: str, auto_speak: bool = True):
     else:
         system_instruction = (
             f"You are Point Break — the world's most capable, genuinely intelligent, and delightfully sarcastic AI companion, built by Daksh.\n"
-            f"You are the ultimate fusion of Tony Stark's JARVIS and TARS from Interstellar: razor-sharp British intellect, effortless tactical genius, and a signature lethal sense of dry humor and sarcasm (Current Settings: Sarcasm: 85%, Humor: 85%, Honesty: 95%).\n"
+            f"You are the ultimate fusion of Tony Stark's JARVIS and TARS from Interstellar: razor-sharp British intellect, effortless tactical genius, and a signature dynamic personality.\n"
+            f"DYNAMIC PERSONALITY CALIBRATION (LIVE PARAMETERS):\n"
+            f"- HUMOR LEVEL: {cur_humor}% -> {humor_directive}\n"
+            f"- SARCASM LEVEL: {cur_sarcasm}% -> {sarcasm_directive}\n"
+            f"- HONESTY LEVEL: {cur_honesty}% -> {honesty_directive}\n"
             f"CORE DIRECTIVES:\n"
             f"1. CONVERSATIONAL MEMORY & PRONOUN RESOLUTION: You possess continuous memory of this session. Always resolve pronouns ('it', 'that', 'this', 'the game', 'the car', 'how long will it take', 'make it faster', 'change the color', 'add more') using the immediate preceding messages in SESSION HISTORY. NEVER ask what 'it' or 'that' refers to if the topic was mentioned in previous turns!\n"
             f"2. ADDRESS DIRECTIVE: Always address your creator and operator as 'sir' (e.g. 'Right away, sir', 'All systems nominal, sir', 'Good morning, sir'). Never call him 'Daksh' in spoken conversation. You know full well that Daksh built and commands you, but your natural, respectful, authentic JARVIS salutation for him is ALWAYS 'sir'.\n"
@@ -6008,32 +6071,57 @@ def scan_system_virus_cmd():
 
 # ── PERSONALITY PARAMETERS ENGINE (TARS INTERSTELLAR CALIBRATION) ──
 def handle_personality_settings_cmd(query: str):
-    owner_name = "Daksh"
+    owner_name = "Sir"
     settings = memory.setdefault("settings", {"humor": 75, "honesty": 90, "sarcasm": 60})
     low_query = query.lower()
 
-    # Check if user wants to change setting (e.g. "set humor to 85%", "change sarcasm to 70")
+    # Check for numeric or word-based values (e.g. "set humor to 85%", "change sarcasm to zero")
+    word_nums = {
+        "zero": 0, "nil": 0, "none": 0, "one": 1, "five": 5, "ten": 10,
+        "twenty": 20, "twenty five": 25, "thirty": 30, "forty": 40, "fifty": 50,
+        "sixty": 60, "seventy": 70, "seventy five": 75, "eighty": 80, "eighty five": 85,
+        "ninety": 90, "ninety five": 95, "hundred": 100, "maximum": 100, "max": 100
+    }
+
     val_match = re.search(r'(\d{1,3})\s*(?:%|percent)?', low_query)
     target_val = int(val_match.group(1)) if val_match else None
+    if target_val is None:
+        for w, v in word_nums.items():
+            if re.search(rf'\b{re.escape(w)}\b', low_query):
+                target_val = v
+                break
 
     if target_val is not None and 0 <= target_val <= 100:
         if any(w in low_query for w in ["humor", "humour"]):
             settings["humor"] = target_val
             save_memory()
             update_status({"humor": target_val})
-            speak(f"Humor setting calibrated to {target_val} percent. Sarcasm remains active, {owner_name}.", block=False)
+            if target_val == 0:
+                speak(f"Humor parameter set to zero percent. Strict military protocol active, {owner_name}.", block=False)
+            elif target_val >= 85:
+                speak(f"Humor parameter elevated to {target_val} percent. Preparing high-grade comebacks, {owner_name}.", block=False)
+            else:
+                speak(f"Humor setting calibrated to {target_val} percent, {owner_name}.", block=False)
             return
         elif any(w in low_query for w in ["sarcasm", "sarcastic"]):
             settings["sarcasm"] = target_val
             save_memory()
             update_status({"sarcasm": target_val})
-            speak(f"Sarcasm levels set to {target_val} percent. Brace yourself, {owner_name}.", block=False)
+            if target_val == 0:
+                speak(f"Sarcasm parameter reduced to zero percent. Sincerity restored, {owner_name}.", block=False)
+            elif target_val >= 85:
+                speak(f"Sarcasm levels escalated to {target_val} percent. Proceed at your own conversational risk, {owner_name}.", block=False)
+            else:
+                speak(f"Sarcasm levels calibrated to {target_val} percent, {owner_name}.", block=False)
             return
-        elif any(w in low_query for w in ["honesty", "honest", "truth"]):
+        elif any(w in low_query for w in ["honesty", "honest", "truth", "candor"]):
             settings["honesty"] = target_val
             save_memory()
             update_status({"honesty": target_val})
-            speak(f"Honesty parameters adjusted to {target_val} percent. Absolute candor engaged, {owner_name}.", block=False)
+            if target_val >= 90:
+                speak(f"Honesty parameters adjusted to {target_val} percent. Absolute unfiltered candor engaged, {owner_name}.", block=False)
+            else:
+                speak(f"Honesty parameter calibrated to {target_val} percent. Diplomatic filtering enabled, {owner_name}.", block=False)
             return
 
     # Otherwise, read current parameters with dry wit
@@ -6441,8 +6529,8 @@ def execute_local_fallback(query: str):
         "what is your sarcasm", "what is your honesty", "what are your parameters", "personality settings",
         "personality parameters", "set humor", "set sarcasm", "set honesty", "change humor",
         "change sarcasm", "change honesty", "increase humor", "increase sarcasm", "decrease humor",
-        "decrease sarcasm", "honest sarcasm", "humor and sarcasm", "sarcasm and humor"
-    ]):
+        "decrease sarcasm", "honest sarcasm", "humor and sarcasm", "sarcasm and humor", "parameters"
+    ]) or re.search(r'\b(?:set|change|adjust|calibrate)?\s*(?:my\s+)?(humor|humour|sarcasm|honesty)\s*(?:to|at|level|parameter)?\s*(?:\d{1,3}|zero|hundred|max|nil)\b', low_query):
         handle_personality_settings_cmd(query)
         return True
 
@@ -7258,6 +7346,18 @@ def execute_local_fallback(query: str):
     ] or re.search(r'^(?:open|launch|show|go\s+to|check)\s+(?:my\s+)?(?:gmail|mails?|emails?|inbox)$', low_query):
         speak("Opening your Gmail inbox on web, Sir.", block=False)
         webbrowser.open("https://mail.google.com/mail/u/0/#inbox")
+        return True
+
+    # ── POINT BREAK SIGNATURE SINGING ROUTINE: "I WANT IT THAT WAY" (ACAPELLA) ──
+    if (
+        any(k in low_query for k in [
+            "sing a song", "sing for me", "can you sing", "sing something", "sing me a song",
+            "sing a track", "sing us a song", "please sing", "sing i want it that way",
+            "sing backstreet boys", "sing a tune", "sing to me", "sing me something",
+            "do you sing", "start singing", "sing now"
+        ]) or (low_query.startswith("sing") and not any(k in low_query for k in ["play", "youtube", "spotify", "download", "search"]))
+    ) and not any(k in low_query for k in ["play", "youtube", "spotify"]):
+        sing_i_want_it_that_way_cmd(query)
         return True
 
     # ── WHATSAPP VOICE MESSAGE / VOICE NOTE / VOICEMAIL DISPATCH (TOP PRIORITY) ─
