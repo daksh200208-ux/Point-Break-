@@ -28,6 +28,8 @@ def clean_phonetics(text: str) -> str:
     text = re.sub(r'\bDAKSH\b', 'DUCK-SH', text)
     return text
 
+import threading
+
 # Paths
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 VOICE_DIR = os.path.join(MODULE_DIR, "assets", "voices", "tars")
@@ -36,30 +38,32 @@ DEFAULT_REF_AUDIO = os.path.join(VOICE_DIR, "tars_ref_honesty.wav")
 
 _MODEL_INSTANCE = None
 _TARS_VOICE_STATE = None
+_TARS_LOCK = threading.Lock()
 
 def get_tars_model_and_voice():
-    """Lazily loads and caches the Pocket TTS model and TARS voice profile."""
+    """Lazily loads and caches the Pocket TTS model and TARS voice profile with thread safety."""
     global _MODEL_INSTANCE, _TARS_VOICE_STATE
-    if _MODEL_INSTANCE is not None and _TARS_VOICE_STATE is not None:
+    with _TARS_LOCK:
+        if _MODEL_INSTANCE is not None and _TARS_VOICE_STATE is not None:
+            return _MODEL_INSTANCE, _TARS_VOICE_STATE
+
+        import torch
+        from pocket_tts import TTSModel
+        from pocket_tts.models.tts_model import _import_model_state
+
+        if _MODEL_INSTANCE is None:
+            # Standard load uses the voice-cloning capable model
+            _MODEL_INSTANCE = TTSModel.load_model()
+
+        if _TARS_VOICE_STATE is None:
+            if os.path.exists(DEFAULT_VOICE_STATE):
+                _TARS_VOICE_STATE = _import_model_state(DEFAULT_VOICE_STATE, device=torch.device("cpu"))
+            elif os.path.exists(DEFAULT_REF_AUDIO):
+                _TARS_VOICE_STATE = _MODEL_INSTANCE.get_state_for_audio_prompt(DEFAULT_REF_AUDIO)
+            else:
+                raise FileNotFoundError(f"TARS voice reference not found at {DEFAULT_VOICE_STATE} or {DEFAULT_REF_AUDIO}")
+
         return _MODEL_INSTANCE, _TARS_VOICE_STATE
-
-    import torch
-    from pocket_tts import TTSModel
-    from pocket_tts.models.tts_model import _import_model_state
-
-    if _MODEL_INSTANCE is None:
-        # Standard load uses the voice-cloning capable model
-        _MODEL_INSTANCE = TTSModel.load_model()
-
-    if _TARS_VOICE_STATE is None:
-        if os.path.exists(DEFAULT_VOICE_STATE):
-            _TARS_VOICE_STATE = _import_model_state(DEFAULT_VOICE_STATE, device=torch.device("cpu"))
-        elif os.path.exists(DEFAULT_REF_AUDIO):
-            _TARS_VOICE_STATE = _MODEL_INSTANCE.get_state_for_audio_prompt(DEFAULT_REF_AUDIO)
-        else:
-            raise FileNotFoundError(f"TARS voice reference not found at {DEFAULT_VOICE_STATE} or {DEFAULT_REF_AUDIO}")
-
-    return _MODEL_INSTANCE, _TARS_VOICE_STATE
 
 def generate_tars_audio(text: str, output_path: str = None) -> str:
     """
@@ -77,7 +81,8 @@ def generate_tars_audio(text: str, output_path: str = None) -> str:
     else:
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
-    audio_tensor = model.generate_audio(voice_state, text)
+    with _TARS_LOCK:
+        audio_tensor = model.generate_audio(voice_state, text)
     data = audio_tensor.numpy().astype(np.float32)
 
     # ── STUDIO DYNAMIC RANGE COMPRESSION & BROADCAST LOUDNESS ──

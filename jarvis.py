@@ -844,9 +844,15 @@ def speech_worker():
         try:
             from tars_speak import generate_tars_audio
             wav_target = base_stem + ".wav"
-            generate_tars_audio(cleaned_text, wav_target)
+            gen_loop = asyncio.get_running_loop()
+            await asyncio.wait_for(
+                gen_loop.run_in_executor(None, generate_tars_audio, cleaned_text, wav_target),
+                timeout=7.0
+            )
             if os.path.exists(wav_target) and os.path.getsize(wav_target) > 0:
                 return wav_target
+        except asyncio.TimeoutError:
+            print("  [Pocket TTS Notice]: Generation timed out (>7.0s) — seamlessly bridging via Edge TTS")
         except Exception as local_err:
             print(f"  [Pocket TTS Notice]: {local_err} (Bridging via Edge TTS)")
 
@@ -1160,8 +1166,8 @@ def _verbal_barge_in_worker():
     r.non_speaking_duration = 0.2
 
     INTERRUPT_KEYWORDS = [
-        "wait", "stop", "listen", "hey", "point", "break", "excuse", "shut",
-        "sorry", "no", "hold", "quiet", "daksh", "jarvis", "cut", "hello",
+        "wait", "stop", "listen", "shut",
+        "hold", "quiet", "cut",
         "pause", "hang on", "shh", "enough"
     ]
 
@@ -1201,11 +1207,13 @@ def _verbal_barge_in_worker():
                     # Ignore if transcribed words match the currently vocalized sentence
                     heard_words = set(re.findall(r'\w+', heard_text))
                     spoken_words = set(re.findall(r'\w+', current_spoken_chunk.lower()))
-                    has_interrupt_kw = any(kw in heard_text for kw in INTERRUPT_KEYWORDS)
+                    # Only external words NOT spoken by Point Break can be interrupt keywords
+                    external_words = heard_words - spoken_words
+                    has_interrupt_kw = any(kw in external_words for kw in INTERRUPT_KEYWORDS)
 
                     if heard_words and spoken_words:
                         overlap = len(heard_words.intersection(spoken_words)) / len(heard_words)
-                        if overlap > 0.50 and not has_interrupt_kw:
+                        if overlap > 0.35 and not has_interrupt_kw:
                             # Speaker bleed / echo detected — ignore
                             continue
 
@@ -1278,6 +1286,8 @@ def _right_ctrl_hotkey_worker():
         except Exception:
             pass
         time.sleep(0.04)
+
+threading.Thread(target=_right_ctrl_hotkey_worker, daemon=True, name="Right-Ctrl-Hotkey-Worker").start()
 
 _last_spoken_call_text = ""
 _last_spoken_call_time = 0.0
