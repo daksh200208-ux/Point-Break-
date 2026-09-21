@@ -814,34 +814,42 @@ def speech_worker():
         if not cleaned_text:
             return
 
-        # 1. Primary Speech Engine: Cloned TARS Voice via Pocket TTS (100% Local Neural Audio)
-        try:
-            from tars_speak import generate_tars_audio
-            generate_tars_audio(cleaned_text, out_path)
-            if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
-                return
-        except Exception as local_err:
-            print(f"  [Pocket TTS Voice Warning]: {local_err} (Falling back to Edge TTS)")
-
-        # 2. Cloud Fallback: Edge TTS
+        # 1. Primary High-Speed Voice Engine: Edge TTS (en-GB-RyanNeural) - Instant (<0.5s), Ultra-crisp, Unlimited
         try:
             if protocol_omega_active:
                 c = edge_tts.Communicate(cleaned_text, VOICE, pitch="-18Hz", rate="+10%", volume=vol)
             else:
                 c = edge_tts.Communicate(cleaned_text, VOICE, pitch=pitch, rate=rate, volume=vol)
-            await asyncio.wait_for(c.save(out_path), timeout=15.0)
+            await asyncio.wait_for(c.save(out_path), timeout=10.0)
+            if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                return
         except Exception as cloud_err:
-            print(f"  [Edge TTS Cloud Error]: {cloud_err}")
+            print(f"  [Edge TTS Primary Error]: {cloud_err} (Attempting local synthesis fallback)")
+
+        # 2. Local Fallback: Pocket TTS / SAPI
+        try:
+            from tars_speak import generate_tars_audio
+            wav_tmp = out_path + ".wav" if not out_path.endswith(".wav") else out_path
+            generate_tars_audio(cleaned_text, wav_tmp)
+            if os.path.exists(wav_tmp) and os.path.getsize(wav_tmp) > 0:
+                return
+        except Exception as local_err:
+            print(f"  [Local TTS Fallback Error]: {local_err}")
 
     def play_chunk(tmp_path):
         global tars_speaking, speech_interrupted, hard_interrupted
-        if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
-            return True
+        actual_path = tmp_path
+        if not os.path.exists(actual_path) or os.path.getsize(actual_path) == 0:
+            if os.path.exists(tmp_path + ".wav") and os.path.getsize(tmp_path + ".wav") > 0:
+                actual_path = tmp_path + ".wav"
+            else:
+                return True
         try:
             tars_speaking = True
             if not pygame.mixer.get_init():
                 pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
-            pygame.mixer.music.load(tmp_path)
+            pygame.mixer.music.set_volume(1.0)
+            pygame.mixer.music.load(actual_path)
             pygame.mixer.music.play()
             while pygame.mixer.music.get_busy() and tars_speaking and not speech_interrupted and not hard_interrupted:
                 time.sleep(0.03)
@@ -850,12 +858,16 @@ def speech_worker():
                 pygame.mixer.music.unload()
             except Exception:
                 pass
+            return not speech_interrupted and not hard_interrupted
         except Exception as play_err:
             print(f"  [Audio Playback Warning]: {play_err}")
+            return False
         finally:
             tars_speaking = False
             try:
-                if os.path.exists(tmp_path):
+                if os.path.exists(actual_path):
+                    os.remove(actual_path)
+                if os.path.exists(tmp_path) and actual_path != tmp_path:
                     os.remove(tmp_path)
             except Exception:
                 pass
@@ -1056,6 +1068,16 @@ def speech_worker():
                     speech_interrupted = False
                     current_spoken_chunk = current_sentence.lower()
                     completed = play_chunk(tmp_sent)
+                    if not completed and not speech_interrupted and not hard_interrupted:
+                        try:
+                            import pythoncom, win32com.client
+                            pythoncom.CoInitialize()
+                            tars_speaking = True
+                            speaker = win32com.client.Dispatch("SAPI.SpVoice")
+                            speaker.Speak(current_sentence)
+                            tars_speaking = False
+                        except:
+                            tars_speaking = False
                     if hard_interrupted:
                         break
                     if verbal_interrupted:
@@ -1161,6 +1183,7 @@ threading.Thread(target=_verbal_barge_in_worker, daemon=True, name="Verbal-Barge
 
 def _prewarm_tars_voice():
     try:
+        time.sleep(8.0)
         from tars_speak import get_tars_model_and_voice
         get_tars_model_and_voice()
         print("  [Voice Engine] TARS neural voice pre-warmed and ready.")
@@ -1230,17 +1253,16 @@ def speak(text: str, block=False):
 
     now = time.time()
     clean_lower = text.lower().strip()
-    # Anti-Duplicate Speech Guard: Suppress identical repeated speech calls within 6.0 seconds
-    if clean_lower == _last_spoken_call_text and (now - _last_spoken_call_time < 6.0):
+    # Anti-Duplicate Speech Guard: Suppress identical repeated speech calls within 4.0 seconds
+    if clean_lower == _last_spoken_call_text and (now - _last_spoken_call_time < 4.0):
         print(f"  [Anti-Duplicate Speech Guard] Suppressed duplicate speech call: '{text[:50]}...'")
         return
 
-    # Secondary Guard: Suppress text that was already spoken in recent history (within 8.0s)
-    if _last_spoken_history and (now - _last_spoken_finish_time < 8.0):
-        for past_item in _last_spoken_history[-4:]:
-            if clean_lower == past_item or (len(clean_lower) > 15 and (clean_lower in past_item or past_item in clean_lower)):
-                print(f"  [Anti-Duplicate Speech Guard] Suppressed speech already in recent history: '{text[:50]}...'")
-                return
+    # Secondary Guard: Suppress identical sentence if already finished within the last 4.0s
+    if _last_spoken_history and (now - _last_spoken_finish_time < 4.0):
+        if clean_lower in _last_spoken_history[-3:]:
+            print(f"  [Anti-Duplicate Speech Guard] Suppressed sentence already spoken: '{text[:50]}...'")
+            return
 
     _last_spoken_call_text = clean_lower
     _last_spoken_call_time = now
