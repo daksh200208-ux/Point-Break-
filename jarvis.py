@@ -832,6 +832,9 @@ def speech_worker():
             except Exception:
                 pass
         cleaned_text = re.sub(r'[*_#`~\[\]\(\)\{\}\<\>\/|@\^]', ' ', raw_text).strip()
+        cleaned_text = re.sub(r'\bDaksh\b', 'Duck-sh', cleaned_text)
+        cleaned_text = re.sub(r'\bdaksh\b', 'duck-sh', cleaned_text)
+        cleaned_text = re.sub(r'\bDAKSH\b', 'DUCK-SH', cleaned_text)
         if not cleaned_text:
             return None
 

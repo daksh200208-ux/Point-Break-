@@ -8,12 +8,25 @@ Runs 100% locally on CPU without external API keys or cloud dependencies.
 
 import os
 import sys
+import re
 import time
 import argparse
 import numpy as np
 import scipy.io.wavfile
 import winsound
 from pathlib import Path
+
+def clean_phonetics(text: str) -> str:
+    """
+    Phonetically maps proper names and words to prevent English TTS grapheme slurring.
+    'Daksh' -> 'Duck-sh' ensures the 'k' and 'sh' consonants are enunciated crisply (/dʌkʃ/).
+    """
+    if not text:
+        return text
+    text = re.sub(r'\bDaksh\b', 'Duck-sh', text)
+    text = re.sub(r'\bdaksh\b', 'duck-sh', text)
+    text = re.sub(r'\bDAKSH\b', 'DUCK-SH', text)
+    return text
 
 # Paths
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -53,6 +66,7 @@ def generate_tars_audio(text: str, output_path: str = None) -> str:
     Generates audio in TARS's voice for the given text.
     Returns the path to the saved 16-bit PCM WAV file.
     """
+    text = clean_phonetics(text)
     model, voice_state = get_tars_model_and_voice()
     
     if output_path is None:
