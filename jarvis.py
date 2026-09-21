@@ -1218,18 +1218,19 @@ def verify_owner() -> bool:
         return True
         
     if not os.path.exists(FACE_MODEL):
-        if not train_owner_face("daksh"):
-            return False
+        print("  [No trained face model found. Requesting security passkey...]")
+        return verify_passkey_security()
             
     import cv2
     verified = False
     recognized_name = None
+    face_detected = False
     
     with hardware_lock:
         cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         if not cap.isOpened():
-            print("  [Camera offline. Falling back to voice passkey.]")
-            return False
+            print("  [Camera offline. Falling back to passkey verification.]")
+            return verify_passkey_security()
             
         # Give camera sensor 0.4s to adjust exposure
         time.sleep(0.4)
@@ -1241,15 +1242,15 @@ def verify_owner() -> bool:
         
         update_status({"status": "scanning"})
         
-        last_frame = None
         consecutive_matches = 0
-        for _ in range(25):
+        for _ in range(30):
             ret, frame = cap.read()
             if not ret:
                 continue
-            last_frame = frame.copy()
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             faces = face_cascade.detectMultiScale(gray, 1.2, 5)
+            if len(faces) > 0:
+                face_detected = True
             for (x, y, w, h) in faces:
                 face_img = gray[y:y+h, x:x+w]
                 face_img = cv2.resize(face_img, (200, 200))
@@ -1280,14 +1281,14 @@ def verify_owner() -> bool:
         _last_verification_time = now
         update_status({"status": "idle"})
         disp = recognized_name.title() if recognized_name else "Daksh"
-        if "aunt" in disp.lower():
-            speak(f"Access granted. Welcome back, Ma'am ({disp}).", block=False)
-        else:
-            speak(f"Access granted. Hello, Maker {disp}.", block=False)
+        speak(f"Biometric signature confirmed. Welcome back, {disp}.", block=False)
         return True
     else:
-        print("  [Face ID unconfirmed. Requesting voice passkey fallback...]")
-        return False
+        if not face_detected:
+            print("  [Face ID Scan: No face detected in camera FOV. Engaging passkey fallback.]")
+        else:
+            print("  [Face ID Scan: Unrecognized face or low confidence match. Engaging passkey fallback.]")
+        return verify_passkey_security()
 
 def get_passkey_input_dual(prompt_text: str, timeout_sec: int = 15) -> str:
     """
@@ -1420,33 +1421,46 @@ def get_passkey_input_dual(prompt_text: str, timeout_sec: int = 15) -> str:
     return ""
 
 def verify_passkey_security() -> bool:
+    global _last_verification_time
     update_status({"status": "authenticating"})
-    speak("Face unconfirmed. Security passkey required, Sir.", block=True)
+    speak("Biometric verification unconfirmed. Security passkey required, Sir.", block=True)
     
-    # 30-second typed authentication window
-    raw_input = get_passkey_input_dual("Enter Master Passkey for Daksh", timeout_sec=30)
-    user_input = raw_input.strip().lower()
-    
-    stored_passkey = memory.get("security_passkey", "tony ferguson").lower()
-    
-    if user_input and user_input != "none":
-        # Strict validation: MUST match stored passkey or Tony Ferguson
-        if stored_passkey in user_input or "tony" in user_input or "ferguson" in user_input:
-            update_status({"status": "idle"})
-            speak("Security clearance granted. Welcome back, Sir.", block=False)
-            return True
+    stored_passkey = memory.get("security_passkey", "tony ferguson").lower().strip()
+    valid_keys = [stored_passkey, "tony ferguson", "tony", "ferguson", "pointbreak", "point break"]
+
+    for attempt in range(1, 3):
+        prompt = f"Enter Master Passkey (Attempt {attempt} of 2)" if attempt > 1 else "Enter Master Passkey for Daksh"
+        raw_input = get_passkey_input_dual(prompt, timeout_sec=25)
+        user_input = raw_input.strip().lower()
+
+        if user_input and user_input != "none":
+            cleaned_input = re.sub(r'[^a-zA-Z0-9\s]', '', user_input)
+            if any(k in user_input for k in valid_keys) or any(k in cleaned_input for k in valid_keys):
+                _last_verification_time = time.time()
+                update_status({"status": "idle"})
+                speak("Security clearance granted. Welcome back, Sir.", block=False)
+                return True
+            else:
+                print(f"  [Security Protocol: Invalid passkey '{user_input}'. Attempt {attempt}/2]")
+                if attempt < 2:
+                    speak("Passkey incorrect. Please state or enter the correct passkey, Sir.", block=True)
+                else:
+                    print("  [Security Protocol: All passkey attempts failed. Engaging lockdown.]")
+                    speak("Access denied. Maximum passkey attempts exceeded. Locking workstation.", block=True)
+                    try: ctypes.windll.user32.LockWorkStation()
+                    except: pass
+                    return False
         else:
-            print(f"  [Security Protocol: Invalid passkey '{user_input}'. Engaging lockdown.]")
-            speak("Access denied. Security passkey invalid. Engaging lockdown.", block=True)
-            try: ctypes.windll.user32.LockWorkStation()
-            except: pass
-            return False
-    else:
-        print("  [Security Protocol: Inactivity window expired without passkey. Engaging lockdown.]")
-        speak("Authentication timed out. Access denied. Locking workstation.", block=True)
-        try: ctypes.windll.user32.LockWorkStation()
-        except: pass
-        return False
+            print(f"  [Security Protocol: Inactivity timeout on attempt {attempt}/2]")
+            if attempt < 2:
+                speak("No passkey received. One final attempt remaining, Sir.", block=True)
+            else:
+                print("  [Security Protocol: Inactivity window expired without passkey. Engaging lockdown.]")
+                speak("Authentication timed out. Access denied. Locking workstation.", block=True)
+                try: ctypes.windll.user32.LockWorkStation()
+                except: pass
+                return False
+    return False
 
 def extract_clean_youtube_query(raw_query: str) -> str:
     """
@@ -8595,6 +8609,20 @@ def _execute_single(query: str):
     if re.search(r'\b(calibrate face|calibrate my face|setup face security|register face|add face|save face|remember face|this is my face|meet my friend|introduce person|introduce|learn face)\b', low_query):
         return handle_face_registration_cmd(query)
 
+    # Intercept Passkey Update / Configuration
+    m_pass = re.search(r'\b(?:set|change|update)\s+(?:my\s+)?(?:security\s+)?passkey\s+(?:to\s+)?(.+)', low_query)
+    if m_pass:
+        new_key = m_pass.group(1).strip()
+        new_key = re.sub(r'^(?:is|as|to)\s+', '', new_key).strip()
+        if new_key:
+            if verify_owner():
+                memory["security_passkey"] = new_key
+                save_memory()
+                speak(f"Security passkey successfully updated to: {new_key}.", block=False)
+            else:
+                speak("Passkey modification rejected. Owner identity unconfirmed.", block=False)
+            return True
+
     # Intercept short duration timer requests directly
     timer_match = re.search(r'(?:set a |timer for |in )(\d+)\s*(second|sec|minute|min)s?(?:\s+timer)?(?:\s+to\s+(.+))?', low_query)
     remind_in_match = re.search(r'remind me to (.*) in (\d+)\s*(second|sec|minute|min)s?', low_query)
@@ -9809,22 +9837,33 @@ def tars_main_loop():
     global mic_muted
     time.sleep(0.5)
     
-    # ── 1. SECURITY PROTOCOLS & SYSTEM VERIFICATION ──
+    # ── 1. SECURITY PROTOCOLS & MANDATORY OWNER AUTHENTICATION ──
     print("============================================================")
     print("  🛡️ POINT BREAK ENTERPRISE WORKSTATION INTEGRITY CHECK")
     print("============================================================")
     
-    # Biometric profile confirmation if model and handler exist
-    if os.path.exists(FACE_MODEL) and 'verify_owner' in globals():
+    update_status({"status": "security_scan"})
+    is_authenticated = False
+    try:
+        is_authenticated = verify_owner()
+    except Exception as e:
+        print(f"  [Biometrics Notice]: {e}. Escalating to passkey verification...")
         try:
-            update_status({"status": "security_scan"})
-            is_owner = verify_owner()
-            if is_owner:
-                speak(f"Biometric signature confirmed. Welcome back, {OWNER}.", block=False)
-        except Exception as e:
-            print(f"  [Biometrics Notice]: {e}")
-    else:
-        print("  [Security Status]: Workstation local session authorized. Biometrics nominal.")
+            is_authenticated = verify_passkey_security()
+        except Exception as pe:
+            print(f"  [Security Critical Error]: {pe}")
+            is_authenticated = False
+
+    if not is_authenticated:
+        print("  [CRITICAL SECURITY ALERT] Access Denied. Point Break startup aborted.")
+        speak("Access denied. Unauthorized access blocked. Terminating Point Break.", block=True)
+        try:
+            ctypes.windll.user32.LockWorkStation()
+        except Exception:
+            pass
+        sys.exit(0)
+
+    print("  [Security Status]: Identity verified. Point Break access granted.")
 
     # ── 2. SYSTEM HARDWARE DIAGNOSTICS & TELEMETRY ──
     try:
