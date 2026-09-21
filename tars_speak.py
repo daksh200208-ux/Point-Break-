@@ -48,6 +48,7 @@ def get_tars_model_and_voice():
             return _MODEL_INSTANCE, _TARS_VOICE_STATE
 
         import torch
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
         from pocket_tts import TTSModel
         from pocket_tts.models.tts_model import _import_model_state
 
