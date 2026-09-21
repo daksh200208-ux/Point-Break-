@@ -59,83 +59,65 @@ class HumanizeVoiceEngine:
 
         low = text.lower()
 
-        # Skip code, math, and formatted data
-        if any(c in text for c in ["```", "`", "{", "}", "[", "]", "<", ">", "\\", "/", "()", "def ", "class ", "import ", "return "]):
+        # Skip pure code, syntax blocks, or URLs
+        if any(c in text for c in ["```", "`", "{", "}", "[", "]", "<", ">", "\\", "http://", "https://", "def ", "class ", "import ", "return "]):
             return True
 
-        # Skip numbers, dates, OTPs, currency, time, percentages
-        if re.search(r'\b\d+[:.]?\d*\b', text):
+        # Skip pure digit streams (e.g. raw OTPs or phone numbers)
+        if re.fullmatch(r'[\d\s\-:.]+', text.strip()):
             return True
 
-        # Skip critical emergency, security, diagnostic, or system alerts
+        # Skip critical emergency security or system alerts
         critical_keywords = [
-            "warning", "error", "failed", "offline", "diagnostics", "battery",
-            "percent", "shutdown", "restart", "alarm", "timer", "pin", "otp",
-            "password", "protocol omega", "self-destruct", "coordinates", "degrees"
+            "protocol omega", "self-destruct", "emergency shutdown", "pin code", "auth token"
         ]
         if any(k in low for k in critical_keywords):
             return True
 
         # Skip if text already contains explicit filler tokens
-        if any(f in low for f in ["uh", "um", "you know", "well..."]):
+        if any(f in low for f in [" uh ", " um ", " you know ", "well..."]):
             return True
 
         return False
 
     def humanize(self, text: str, force: bool = False) -> str:
         """
-        Transforms text by injecting natural conversational pauses and disfluencies.
+        Transforms text by injecting natural conversational pauses and human disfluencies ("uh", "um", "well"),
+        replacing awkward punctuation silences with organic speech flow.
         """
         if not force and self.should_skip(text):
             return text
 
         words = text.split()
-        if len(words) < 4:
+        if len(words) < 3:
             return text
 
         result = text.strip()
 
-        # Decide whether to apply disfluency based on probability
-        if not force and random.random() > self.probability:
-            return result
+        # 1. Mid-Sentence Comma Smoothing (replaces awkward dead-air punctuation stops with natural "uh/um")
+        if "," in result:
+            def _replace_comma(match):
+                if random.random() < 0.85:
+                    return random.choice([", uh, ", ", um, ", ", you know, ", ", well, "])
+                return match.group(0)
+            result = re.sub(r',\s+', _replace_comma, result)
 
-        dice = random.random()
+        # 2. Mid-Sentence Period Smoothing (replaces dead stops between sentences with fluid human thinking bridges)
+        if re.search(r'\.\s+[A-Za-z]', result):
+            def _replace_period(match):
+                nxt = match.group(1)
+                if random.random() < 0.75:
+                    bridge = random.choice(["... uh, ", "... um, ", "... so, ", ". Well, "])
+                    return bridge + nxt.lower()
+                return ". " + nxt
+            result = re.sub(r'\.\s+([A-Za-z])', _replace_period, result)
 
-        # Pattern A: Sentence Starter Filler (45% of humanized utterances)
-        if dice < 0.45:
-            filler = random.choice(STARTER_FILLERS)
-            first_char_lower = result[0].lower() + result[1:]
-            result = filler + first_char_lower
-
-        # Pattern B: Word Micro-Stutter (25% of humanized utterances)
-        elif dice < 0.70:
-            words_list = result.split()
-            stuttered = False
-            for idx, w in enumerate(words_list[:4]):
-                clean_w = w.lower().strip(" ,.!?\"'")
-                if clean_w in STUTTER_WORDS:
-                    rep = STUTTER_WORDS[clean_w]
-                    if w[0].isupper():
-                        rep = rep[0].upper() + rep[1:]
-                    words_list[idx] = rep
-                    stuttered = True
-                    break
-            if stuttered:
-                result = " ".join(words_list)
-            else:
-                # Fallback to starter filler
-                result = random.choice(STARTER_FILLERS) + result[0].lower() + result[1:]
-
-        # Pattern C: Mid-Sentence Insertion (30% of humanized utterances)
-        else:
-            sentences = re.split(r'([,.])', result)
-            if len(sentences) >= 3 and len(sentences[0].split()) >= 3:
-                # Insert filler after the first clause
-                filler = random.choice(MID_FILLERS)
-                sentences[1] = filler
-                result = "".join(sentences)
-            else:
-                result = random.choice(STARTER_FILLERS) + result[0].lower() + result[1:]
+        # 3. Sentence Starter Vocalization (starts response with natural human thinking cadence)
+        if not any(result.lower().startswith(f.lower().strip(" ,...")) for f in ["well", "uh", "um", "right", "let's see"]):
+            if random.random() < 0.45:
+                starter = random.choice(STARTER_FILLERS)
+                first_char_lower = result[0].lower() + result[1:]
+                result = starter + first_char_lower
 
         # Clean any accidental double punctuation or spacing
         result = re.sub(r'\s+', ' ', result)

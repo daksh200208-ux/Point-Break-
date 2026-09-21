@@ -106,7 +106,24 @@ def generate_tars_audio(text: str, output_path: str = None) -> str:
         over = (np.abs(boosted[mask_high]) - threshold) / (1.0 - threshold)
         y[mask_high] = sign * (threshold + (1.0 - threshold) * np.tanh(over)) * 0.96
 
-    # 4. Convert to 16-bit PCM dual-channel stereo (powers both left & right speakers at 100%)
+    # 4. Smooth edge tapering & zero-padding (eliminates start/end clicks, pops, and vocoder scratchiness)
+    sr = model.sample_rate
+    fade_in_len = int(sr * 0.020)   # 20ms smooth raised-cosine fade-in
+    fade_out_len = int(sr * 0.030)  # 30ms smooth raised-cosine fade-out
+    if len(y) > (fade_in_len + fade_out_len):
+        fade_in = 0.5 * (1.0 - np.cos(np.linspace(0, np.pi, fade_in_len, dtype=np.float32)))
+        y[:fade_in_len] *= fade_in
+        fade_out = 0.5 * (1.0 + np.cos(np.linspace(0, np.pi, fade_out_len, dtype=np.float32)))
+        y[-fade_out_len:] *= fade_out
+        y[0] = 0.0
+        y[-1] = 0.0
+
+    # 4b. Lead-in and lead-out true silence buffer (prevents soundcard DMA DAC step-clicks)
+    pad_in = np.zeros(int(sr * 0.015), dtype=np.float32)
+    pad_out = np.zeros(int(sr * 0.025), dtype=np.float32)
+    y = np.concatenate([pad_in, y, pad_out])
+
+    # 5. Convert to 16-bit PCM dual-channel stereo (powers both left & right speakers at 100%)
     pcm16 = (np.clip(y, -0.96, 0.96) * 32767).astype(np.int16)
     if pcm16.ndim == 1:
         stereo_pcm16 = np.column_stack((pcm16, pcm16))

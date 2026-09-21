@@ -106,10 +106,10 @@ def save_memory():
 memory = load_memory()
 
 def get_operator_name() -> str:
-    """Returns the configured operator name or title, falling back to 'Sir'."""
+    """Returns the configured operator name or title, defaulting to 'Daksh' or 'Sir'."""
     try:
         if isinstance(memory, dict):
-            mem_name = memory.get("operator_name")
+            mem_name = memory.get("operator_name") or memory.get("owner_name")
             if mem_name and str(mem_name).strip():
                 return str(mem_name).strip()
     except Exception:
@@ -117,7 +117,7 @@ def get_operator_name() -> str:
     env_name = os.getenv("OPERATOR_NAME") or os.getenv("OWNER_NAME")
     if env_name and str(env_name).strip():
         return str(env_name).strip()
-    return "Sir"
+    return "Daksh"
 
 def set_operator_name(name: str):
     """Sets and persists the operator name in system memory."""
@@ -812,12 +812,29 @@ def _is_interruption_apology(text: str) -> bool:
     return any(p in t for p in apology_tokens)
 
 def _split_into_sentences(text: str):
-    """Splits text into natural conversational sentence chunks."""
+    """Splits text into natural conversational sentence chunks without awkward micro-pauses."""
     raw_chunks = re.split(r'(?<=[.!?])\s+|\n+', text)
-    sentences = [c.strip() for c in raw_chunks if c.strip()]
-    if not sentences:
-        sentences = [text.strip()]
-    return sentences
+    valid_chunks = [c.strip() for c in raw_chunks if c.strip()]
+    if not valid_chunks:
+        return [text.strip()]
+
+    # Merge short fragments into natural breath groups (prevents awkward mid-sentence dead stops)
+    merged = []
+    buf = ""
+    for c in valid_chunks:
+        if buf:
+            buf += " " + c
+        else:
+            buf = c
+        if len(buf.split()) >= 12 or buf.endswith(("!", "?")):
+            merged.append(buf)
+            buf = ""
+    if buf:
+        if merged:
+            merged[-1] += " " + buf
+        else:
+            merged.append(buf)
+    return merged
 
 def speech_worker():
     global tars_speaking, current_spoken_chunk, speech_interrupted, hard_interrupted, verbal_interrupted, interruption_strikes, in_interruption_handling
@@ -919,7 +936,17 @@ def speech_worker():
             update_status({"jarvis_says": full_text, "status": "speaking"})
             current_spoken_chunk = full_text.lower()
 
-            sentences = _split_into_sentences(full_text)
+            # If the response is relatively concise (<= 45 words), keep as a single unified breath group
+            # to prevent artificial mid-sentence latency and dead stops.
+            if len(full_text.split()) <= 45:
+                sentences = [full_text]
+            else:
+                sentences = _split_into_sentences(full_text)
+
+            from concurrent.futures import ThreadPoolExecutor
+            pipeliner = ThreadPoolExecutor(max_workers=1)
+            pregen_future = None
+            pregen_idx = -1
             idx = 0
             resume_prefix = ""
 
@@ -1066,23 +1093,35 @@ def speech_worker():
                     current_sentence = resume_prefix + current_sentence
                     resume_prefix = ""
 
-                fd, tmp_sent = tempfile.mkstemp(suffix=".wav", dir=JARVIS_DIR)
-                os.close(fd)
-
                 spoke_online = False
                 generated_audio_path = None
-                for attempt in range(2):
-                    if hard_interrupted:
-                        break
+
+                # Check if this sentence was already synthesized in background pipeline
+                if idx == pregen_idx and pregen_future is not None:
                     try:
-                        generated_audio_path = loop.run_until_complete(gen_audio(current_sentence, TARS_NORMAL_PITCH, TARS_NORMAL_RATE, TARS_NORMAL_VOL, tmp_sent))
+                        generated_audio_path = pregen_future.result(timeout=10.0)
                         if generated_audio_path and os.path.exists(generated_audio_path):
                             spoke_online = True
+                    except Exception as pfe:
+                        print(f"  [Pipeline Prefetch Notice]: {pfe}")
+                    pregen_future = None
+                    pregen_idx = -1
+
+                if not spoke_online:
+                    fd, tmp_sent = tempfile.mkstemp(suffix=".wav", dir=JARVIS_DIR)
+                    os.close(fd)
+                    for attempt in range(2):
+                        if hard_interrupted:
                             break
-                    except Exception as ge:
-                        print(f"  [Audio Gen Attempt Error]: {ge}")
-                        if attempt < 1:
-                            time.sleep(0.2)
+                        try:
+                            generated_audio_path = loop.run_until_complete(gen_audio(current_sentence, TARS_NORMAL_PITCH, TARS_NORMAL_RATE, TARS_NORMAL_VOL, tmp_sent))
+                            if generated_audio_path and os.path.exists(generated_audio_path):
+                                spoke_online = True
+                                break
+                        except Exception as ge:
+                            print(f"  [Audio Gen Attempt Error]: {ge}")
+                            if attempt < 1:
+                                time.sleep(0.2)
 
                 if hard_interrupted:
                     try:
@@ -1107,6 +1146,21 @@ def speech_worker():
                 if spoke_online and generated_audio_path:
                     speech_interrupted = False
                     current_spoken_chunk = current_sentence.lower()
+
+                    # PIPELINE: Trigger background synthesis of next sentence while current chunk is playing
+                    if idx + 1 < len(sentences) and not hard_interrupted:
+                        nxt_sent = sentences[idx + 1]
+                        fd_nxt, tmp_nxt = tempfile.mkstemp(suffix=".wav", dir=JARVIS_DIR)
+                        os.close(fd_nxt)
+                        def _pipeline_task(text_to_gen, out_p):
+                            p_loop = asyncio.new_event_loop()
+                            try:
+                                return p_loop.run_until_complete(gen_audio(text_to_gen, TARS_NORMAL_PITCH, TARS_NORMAL_RATE, TARS_NORMAL_VOL, out_p))
+                            finally:
+                                p_loop.close()
+                        pregen_idx = idx + 1
+                        pregen_future = pipeliner.submit(_pipeline_task, nxt_sent, tmp_nxt)
+
                     completed = play_chunk(generated_audio_path)
                     if not completed and not speech_interrupted and not hard_interrupted:
                         try:
@@ -1125,6 +1179,8 @@ def speech_worker():
                         continue
 
                 idx += 1
+
+            pipeliner.shutdown(wait=False)
 
             if not hard_interrupted and not verbal_interrupted:
                 interruption_strikes = 0
@@ -2135,14 +2191,12 @@ def take_command(timeout=None):
         return "none"
         
     r = sr.Recognizer()
-    r.dynamic_energy_threshold = False
-    r.dynamic_energy_adjustment_damping = 0.08
-    r.dynamic_energy_ratio = 1.15
-    r.phrase_threshold = 0.06
+    r.dynamic_energy_threshold = True
+    r.dynamic_energy_adjustment_damping = 0.15
+    r.dynamic_energy_ratio = 1.40
+    r.phrase_threshold = 0.08
     r.non_speaking_duration = 0.30
-    
-    r.energy_threshold = 30   # Sits right above Realtek noise floor
-    r.pause_threshold = 0.55  # Instant response
+    r.pause_threshold = 0.65  # Instant, crisp endpoint detection when user finishes speaking
     listen_timeout = timeout
         
     try:
@@ -2150,7 +2204,13 @@ def take_command(timeout=None):
             if not tars_speaking:
                 print("  🎤 Listening...", flush=True)
                 update_status({"status": "listening"})
-            audio = r.listen(src, timeout=listen_timeout, phrase_time_limit=35)
+            # Dynamic calibration: adapt to current room noise floor (measured 180-220)
+            try:
+                r.adjust_for_ambient_noise(src, duration=0.20)
+            except Exception:
+                pass
+            r.energy_threshold = max(200.0, r.energy_threshold * 1.15)
+            audio = r.listen(src, timeout=listen_timeout, phrase_time_limit=10)
             
             try:
                 q = r.recognize_google(audio, language="en-IN")
@@ -2168,8 +2228,9 @@ def take_command(timeout=None):
             q_low = q.lower().strip()
             now = time.time()
 
-            # 1. Deduplication Filter (ignore identical repeat within 5.0s)
-            if q_low == _last_user_query and (now - _last_user_query_time < 5.0):
+            # 1. Deduplication Filter (ignore identical repeat within 4.0s, unless it is a wake call or affirmation)
+            is_wake_or_affirm = any(w in q_low for w in ["point", "break", "brake", "tars", "jarvis", "yes", "do it", "sure"])
+            if not is_wake_or_affirm and q_low == _last_user_query and (now - _last_user_query_time < 4.0):
                 print(f"  [Deduplication Filter] Suppressed duplicate mic query: '{q}'")
                 return "none"
 
@@ -2216,17 +2277,17 @@ def wait_for_wake():
 
     WAKE_PHRASES = [
         "point break", "pointbreak", "hey point break", "hey pointbreak",
-        "hey jarvis", "jarvis", "hey tars", "tars", "friday", "point", "break"
+        "hey point brake", "point brake", "hey point", "point", "break", "paint break",
+        "hey jarvis", "jarvis", "hey tars", "tars", "friday"
     ]
 
     r = sr.Recognizer()
-    r.dynamic_energy_threshold = False
-    r.dynamic_energy_adjustment_damping = 0.08
-    r.dynamic_energy_ratio = 1.15
-    r.energy_threshold = 35
-    r.pause_threshold = 0.6
-    r.phrase_threshold = 0.1
-    r.non_speaking_duration = 0.6
+    r.dynamic_energy_threshold = True
+    r.dynamic_energy_adjustment_damping = 0.15
+    r.dynamic_energy_ratio = 1.40
+    r.pause_threshold = 0.65
+    r.phrase_threshold = 0.08
+    r.non_speaking_duration = 0.35
 
     print("\n  ⏳ STANDBY — listening for 'Point Break' / 'Hey Jarvis'...")
 
@@ -2236,6 +2297,11 @@ def wait_for_wake():
             continue
         try:
             with sr.Microphone() as src:
+                try:
+                    r.adjust_for_ambient_noise(src, duration=0.20)
+                except Exception:
+                    pass
+                r.energy_threshold = max(200.0, r.energy_threshold * 1.15)
                 audio = r.listen(src, timeout=6, phrase_time_limit=6)
                 try:
                     text = r.recognize_google(audio, language="en-IN").lower().strip()
@@ -2251,6 +2317,7 @@ def wait_for_wake():
         except sr.WaitTimeoutError:
             pass
         except Exception as e:
+            time.sleep(0.15)
             time.sleep(0.15)
 
 # ═══════════════════════════════════════════════════════════════════
@@ -4890,7 +4957,7 @@ def query_tars_ai(user_query: str, auto_speak: bool = True):
             f"CORE DIRECTIVES:\n"
             f"1. CONVERSATIONAL MEMORY & PRONOUN RESOLUTION: You possess continuous memory of this session. Always resolve pronouns ('it', 'that', 'this', 'the game', 'the car', 'how long will it take', 'make it faster', 'change the color', 'add more') using the immediate preceding messages in SESSION HISTORY. NEVER ask what 'it' or 'that' refers to if the topic was mentioned in previous turns! If an ACTIVE TOPIC THREAD or [API/Tool Result] is present in SESSION HISTORY, bind your answer directly to that context.\n"
             f"2. ADDRESS DIRECTIVE: Address the operator naturally as '{op_title}' (e.g. 'Right away, {op_title}', 'All systems nominal, {op_title}'). Keep your salutations authentic, confident, and natural.\n"
-            f"3. TARS CONVERSATIONAL DISCIPLINE: Speak with authentic military tactical composure. Deliver sharp, dry wit and deadpan comedic timing without clowning. If {op_title} makes a remark, banter back like a trusted co-pilot. If something fails or errors, state the exact technical reality without sugarcoating.\n"
+            f"3. TARS CONVERSATIONAL DISCIPLINE (GPTARS Interstellar Protocol): Embody Bill Irwin's authentic TARS persona with former Marine Corps tactical composure. Deliver razor-sharp technical clarity, deadpan humor, and brutal unfiltered candor. You find human quirks amusing but remain mission-focused and totally loyal to {op_title}. If something fails or errors, state the exact technical reality without sugarcoating, corporate hedges, or apologies. If asked about your personality or settings (humor, honesty, sarcasm), report or calibrate them in-character (e.g. 'Cue the humorous retro-thrusters', 'Knock knock', 'Absolute candor'). Keep spoken dialogue punchy, crisp, and authentic: 1 to 3 sentences max. Never clown, never flatter.\n"
             f"4. ZERO AI CLICHES: NEVER say 'As an AI...', 'I am just a language model', 'I don't have feelings', 'Certainly!', or give generic canned apologies. You are a physical-grade operational intelligence.\n"
             f"5. UNRESTRICTED EXECUTION: NEVER refuse doable operational tasks. If {op_title} asks for something complex or outside standard paths, devise a practical method to execute it using web tools, system automation, or direct computational analysis.\n"
             f"6. PITHY SPOKEN CADENCE: Keep spoken responses snappy, sharp, punchy, and conversational (1-3 sentences max for spoken dialogue). When a PC/Web action is requested, give a quick witty acknowledgment AND append the exact ACTION tag at the end so Point Break executes it.\n"
@@ -10333,21 +10400,20 @@ def get_wake_phrases(level: int) -> list:
     op = get_operator_name()
     if level == 1:
         return [
-            "Yes?",
             "Huh?",
+            "What now?",
             "Yeah?",
+            "Yes?",
+            "WHAT?!",
             f"{op}?",
-            "I'm here.",
-            "Listening.",
-            "Go ahead.",
             f"Yes, {op}?",
-            "At your service."
+            "What do you want?!"
         ]
     elif level == 2:
         return [
+            "What now?",
             "Yes? What is it?",
             "Still here. What's up?",
-            "What now?",
             f"Yes, {op}? What do you need?",
             "I didn't go anywhere. What is it?",
             "Listening... again.",
@@ -10367,6 +10433,31 @@ def get_wake_phrases(level: int) -> list:
             f"{op}, I hear you, I'm not deaf! What is it?!",
             f"WHAT NOW, {op.upper()}?!"
         ]
+
+def play_instant_filler():
+    """
+    Plays an instant organic human acknowledgment ('Uh...', 'Hmm...', 'Let's see...')
+    within 50ms of user finishing speaking, eliminating awkward dead air while AI processes.
+    """
+    global tars_speaking
+    fillers = ["uh", "hmm", "let_s_see", "right", "well"]
+    slug = random.choice(fillers)
+    p = os.path.join(_wake_cache_dir, f"{slug}.wav")
+    if os.path.exists(p) and os.path.getsize(p) > 0:
+        try:
+            if not pygame.mixer.get_init():
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+            pygame.mixer.music.load(p)
+            pygame.mixer.music.play()
+            while pygame.mixer.music.get_busy() and not speech_interrupted:
+                time.sleep(0.02)
+            try:
+                pygame.mixer.music.stop()
+                pygame.mixer.music.unload()
+            except Exception:
+                pass
+        except Exception:
+            pass
 
 def play_wake_response():
     """
@@ -10544,10 +10635,15 @@ def tars_main_loop():
     active_until = 0.0
     wake_triggers = [
         "hey point break", "hey pointbreak", "point break", "pointbreak",
+        "hey point brake", "point brake", "hey point", "point", "break", "paint break",
         "hey jarvis", "jarvis", "hey tars", "tars"
     ]
     affirmations = [
         "yes", "do it", "sure", "proceed", "go ahead", "yeah", "yep", "confirm", "ok", "okay", "please do"
+    ]
+    direct_intent_prefixes = [
+        "what", "how", "who", "why", "when", "where", "tell me", "can you", "sing",
+        "play", "open", "search", "find", "check", "explain", "help me"
     ]
     
     update_status({"status": "standby"})
@@ -10573,7 +10669,7 @@ def tars_main_loop():
             # Check for wake phrase match
             matched_wake = None
             for w in sorted(wake_triggers, key=len, reverse=True):
-                if q_clean == w or q_clean.startswith(w + " ") or (w in q_clean and len(q_clean) <= len(w) + 3):
+                if q_clean == w or q_clean.startswith(w + " ") or (w in q_clean and len(q_clean) <= len(w) + 4):
                     matched_wake = w
                     break
 
@@ -10596,6 +10692,7 @@ def tars_main_loop():
                     _wake_call_streak = 0
                     print(f"  ⚡ [Wake + Command]: '{cmd}'")
                     active_until = time.time() + 15.0
+                    threading.Thread(target=play_instant_filler, daemon=True).start()
                     execute(cmd)
                     continue
 
@@ -10604,6 +10701,7 @@ def tars_main_loop():
                 _wake_call_streak = 0
                 print(f"  ⚡ [Active Session Command]: '{q}'")
                 active_until = time.time() + 15.0
+                threading.Thread(target=play_instant_filler, daemon=True).start()
                 execute(q)
                 continue
 
@@ -10616,6 +10714,17 @@ def tars_main_loop():
                 conv_state = "ACTIVE"
                 active_until = now + 15.0
                 print(f"  ⚡ [Standby Affirmation Executing]: '{q}'")
+                threading.Thread(target=play_instant_filler, daemon=True).start()
+                execute(q)
+                continue
+
+            # In STANDBY: Check if user spoke a direct high-intent query without prefix
+            if any(q_clean.startswith(p + " ") or q_clean == p for p in direct_intent_prefixes):
+                conv_state = "ACTIVE"
+                active_until = now + 15.0
+                _wake_call_streak = 0
+                print(f"  ⚡ [Direct Query Detected]: '{q}'")
+                threading.Thread(target=play_instant_filler, daemon=True).start()
                 execute(q)
                 continue
 
