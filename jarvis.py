@@ -10138,8 +10138,150 @@ def start_tars_server():
                 raise e
     print("  [CRITICAL: No free ports found between 8000 and 8020 for TARS Server]")
 
+# ── RAPID WAKE-PHRASE RESPONSE ENGINE ─────────────────────────────
+_last_wake_call_time = 0.0
+_wake_call_streak = 0
+_wake_cache_dir = os.path.join(JARVIS_DIR, "assets", "wake_audio")
+
+WAKE_RESPONSES_LEVEL1 = [
+    "Yes?",
+    "Huh?",
+    "Yeah?",
+    "Sir?",
+    "I'm here.",
+    "Listening.",
+    "Go ahead.",
+    "Yes, Sir?",
+    "At your service."
+]
+
+WAKE_RESPONSES_LEVEL2 = [
+    "Yes? What is it?",
+    "Still here. What's up?",
+    "What now?",
+    "Yes, Daksh? What do you need?",
+    "I didn't go anywhere. What is it?",
+    "Listening... again.",
+    "Yes? I am right here."
+]
+
+WAKE_RESPONSES_LEVEL3 = [
+    "WHAT NOW?!",
+    "WHAT?!",
+    "Again?! What is it now?!",
+    "What do you want?!",
+    "I'm right here! WHAT NOW?!",
+    "Are we going to do something or just keep shouting my name?!",
+    "My patience parameter is at zero percent, Daksh. What now?!",
+    "Yes, I still exist! WHAT?!",
+    "Do you need something, or are you just testing if my microphone works?!",
+    "Daksh, I hear you, I'm not deaf! What is it?!",
+    "WHAT NOW, SIR?!"
+]
+
+def play_wake_response():
+    """
+    Instantly responds to 'Hey Point Break' with low-latency snappy phrases,
+    escalating to exasperated / irritated responses if called repeatedly in a short span.
+    Uses pre-cached audio for near-instant 0ms response latency.
+    """
+    global _last_wake_call_time, _wake_call_streak, tars_speaking, speech_interrupted
+
+    now = time.time()
+    time_since_last = now - _last_wake_call_time if _last_wake_call_time > 0 else 999.0
+    _last_wake_call_time = now
+
+    # Short span threshold: 20 seconds
+    if time_since_last < 20.0:
+        _wake_call_streak += 1
+    else:
+        _wake_call_streak = 1
+
+    if _wake_call_streak == 1:
+        phrase = random.choice(WAKE_RESPONSES_LEVEL1)
+    elif _wake_call_streak == 2:
+        phrase = random.choice(WAKE_RESPONSES_LEVEL2)
+    else:
+        phrase = random.choice(WAKE_RESPONSES_LEVEL3)
+
+    print(f"\n  ⚡ [Wake Call #{_wake_call_streak}] P.O.I.N.T.  B.R.E.A.K. >  {phrase}")
+    update_status({"jarvis_says": phrase, "status": "listening"})
+
+    # Check if pre-rendered audio exists in wake_cache for instant low-latency playback
+    cache_slug = re.sub(r'[^a-zA-Z0-9]', '_', phrase.lower()).strip('_')
+    cached_path = os.path.join(_wake_cache_dir, f"{cache_slug}.wav")
+
+    played_instant = False
+    if os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
+        try:
+            tars_speaking = True
+            if not pygame.mixer.get_init():
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+            pygame.mixer.music.load(cached_path)
+            pygame.mixer.music.play()
+            while pygame.mixer.music.get_busy() and tars_speaking and not speech_interrupted:
+                time.sleep(0.02)
+            try:
+                pygame.mixer.music.stop()
+                pygame.mixer.music.unload()
+            except Exception:
+                pass
+            played_instant = True
+        except Exception as pe:
+            print(f"  [Instant Wake Playback Note]: {pe}")
+        finally:
+            tars_speaking = False
+
+    if not played_instant:
+        # Generate and play via speech engine, saving to cache for future calls
+        try:
+            from tars_speak import generate_tars_audio
+            os.makedirs(_wake_cache_dir, exist_ok=True)
+            generate_tars_audio(phrase, cached_path)
+            if os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
+                tars_speaking = True
+                if not pygame.mixer.get_init():
+                    pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+                pygame.mixer.music.load(cached_path)
+                pygame.mixer.music.play()
+                while pygame.mixer.music.get_busy() and tars_speaking and not speech_interrupted:
+                    time.sleep(0.02)
+                try:
+                    pygame.mixer.music.stop()
+                    pygame.mixer.music.unload()
+                except Exception:
+                    pass
+                tars_speaking = False
+                played_instant = True
+        except Exception:
+            pass
+
+    if not played_instant:
+        speak(phrase, block=False)
+
+def _pregenerate_wake_phrases():
+    """
+    Background pre-generation of common wake responses to guarantee 0ms latency.
+    """
+    try:
+        os.makedirs(_wake_cache_dir, exist_ok=True)
+        sample_phrases = ["Yes?", "Huh?", "Yeah?", "Sir?", "What now?", "WHAT NOW?!", "WHAT?!", "What do you want?!"]
+        from tars_speak import generate_tars_audio
+        for p in sample_phrases:
+            slug = re.sub(r'[^a-zA-Z0-9]', '_', p.lower()).strip('_')
+            dest = os.path.join(_wake_cache_dir, f"{slug}.wav")
+            if not os.path.exists(dest) or os.path.getsize(dest) == 0:
+                try:
+                    generate_tars_audio(p, dest)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+threading.Thread(target=_pregenerate_wake_phrases, daemon=True, name="Wake-Cache-Prewarm").start()
+
 def tars_main_loop():
-    global mic_muted
+    global mic_muted, _wake_call_streak
     time.sleep(0.5)
     
     # ── 1. SECURITY PROTOCOLS & MANDATORY OWNER AUTHENTICATION ──
@@ -10251,10 +10393,10 @@ def tars_main_loop():
 
                 if not cmd:
                     print("  ⚡ [Wake Phrase Detected]: Session ACTIVE for 15 seconds.")
-                    update_status({"status": "listening"})
-                    speak("Yes Sir? I'm listening.", block=False)
+                    play_wake_response()
                     continue
                 else:
+                    _wake_call_streak = 0
                     print(f"  ⚡ [Wake + Command]: '{cmd}'")
                     active_until = time.time() + 15.0
                     execute(cmd)
@@ -10262,6 +10404,7 @@ def tars_main_loop():
 
             # If already in ACTIVE conversational state, execute follow-ups without wake word
             if conv_state == "ACTIVE":
+                _wake_call_streak = 0
                 print(f"  ⚡ [Active Session Command]: '{q}'")
                 active_until = time.time() + 15.0
                 execute(q)
@@ -10272,6 +10415,7 @@ def tars_main_loop():
             is_affirmative = any(q_clean == aff or q_clean.startswith(aff + " ") for aff in affirmations)
 
             if has_pending and is_affirmative:
+                _wake_call_streak = 0
                 conv_state = "ACTIVE"
                 active_until = now + 15.0
                 print(f"  ⚡ [Standby Affirmation Executing]: '{q}'")
