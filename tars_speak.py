@@ -66,18 +66,35 @@ def generate_tars_audio(text: str, output_path: str = None) -> str:
     audio_tensor = model.generate_audio(voice_state, text)
     data = audio_tensor.numpy().astype(np.float32)
 
-    # ── STUDIO AMPLITUDE & LOUDNESS NORMALIZATION ──
-    # Pocket TTS generates low raw amplitude tensors (~0.01-0.08 peak).
-    # Normalize to 0.95 peak (-0.45 dBFS) to ensure loud, clear, room-filling cinematic volume.
-    max_amp = np.max(np.abs(data))
-    if max_amp > 1e-5:
-        target_peak = 0.95
-        normalized = data * (target_peak / max_amp)
-    else:
-        normalized = data
+    # ── STUDIO DYNAMIC RANGE COMPRESSION & BROADCAST LOUDNESS ──
+    # 1. Remove DC offset
+    data = data - np.mean(data)
 
-    pcm16 = (np.clip(normalized, -1.0, 1.0) * 32767).astype(np.int16)
-    scipy.io.wavfile.write(output_path, model.sample_rate, pcm16)
+    # 2. Initial peak normalization to 0.85 to establish consistent headroom
+    raw_peak = np.max(np.abs(data))
+    if raw_peak > 1e-5:
+        data = data * (0.85 / raw_peak)
+
+    # 3. Soft-knee dynamic range compression & saturation
+    # Boosts vocal body by ~2.8x (+9 dB) while smoothly compressing transient peaks (plosives)
+    gain = 2.8
+    boosted = data * gain
+    threshold = 0.65
+    y = np.copy(boosted)
+    mask_high = np.abs(boosted) > threshold
+    if np.any(mask_high):
+        sign = np.sign(boosted[mask_high])
+        over = (np.abs(boosted[mask_high]) - threshold) / (1.0 - threshold)
+        y[mask_high] = sign * (threshold + (1.0 - threshold) * np.tanh(over)) * 0.96
+
+    # 4. Convert to 16-bit PCM dual-channel stereo (powers both left & right speakers at 100%)
+    pcm16 = (np.clip(y, -0.96, 0.96) * 32767).astype(np.int16)
+    if pcm16.ndim == 1:
+        stereo_pcm16 = np.column_stack((pcm16, pcm16))
+    else:
+        stereo_pcm16 = pcm16
+
+    scipy.io.wavfile.write(output_path, model.sample_rate, stereo_pcm16)
     return output_path
 
 def speak(text: str, play: bool = True, block: bool = True) -> str:
