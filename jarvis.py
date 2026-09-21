@@ -769,11 +769,27 @@ def speech_worker():
             except Exception:
                 pass
         cleaned_text = re.sub(r'[*_#`~\[\]\(\)\{\}\<\>\/|@\^]', ' ', raw_text).strip()
-        if protocol_omega_active:
-            c = edge_tts.Communicate(cleaned_text, VOICE, pitch="-18Hz", rate="+10%", volume=vol)
-        else:
-            c = edge_tts.Communicate(cleaned_text, VOICE, pitch=pitch, rate=rate, volume=vol)
-        await asyncio.wait_for(c.save(out_path), timeout=15.0)
+        if not cleaned_text:
+            return
+
+        # 1. Primary Speech Engine: Cloned TARS Voice via Pocket TTS (100% Local Neural Audio)
+        try:
+            from tars_speak import generate_tars_audio
+            generate_tars_audio(cleaned_text, out_path)
+            if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                return
+        except Exception as local_err:
+            print(f"  [Pocket TTS Voice Warning]: {local_err} (Falling back to Edge TTS)")
+
+        # 2. Cloud Fallback: Edge TTS
+        try:
+            if protocol_omega_active:
+                c = edge_tts.Communicate(cleaned_text, VOICE, pitch="-18Hz", rate="+10%", volume=vol)
+            else:
+                c = edge_tts.Communicate(cleaned_text, VOICE, pitch=pitch, rate=rate, volume=vol)
+            await asyncio.wait_for(c.save(out_path), timeout=15.0)
+        except Exception as cloud_err:
+            print(f"  [Edge TTS Cloud Error]: {cloud_err}")
 
     def play_chunk(tmp_path):
         global tars_speaking, speech_interrupted, hard_interrupted
@@ -938,6 +954,16 @@ def speech_worker():
 # Start Speech Worker thread immediately on boot
 threading.Thread(target=speech_worker, daemon=True).start()
 
+def _prewarm_tars_voice():
+    try:
+        from tars_speak import get_tars_model_and_voice
+        get_tars_model_and_voice()
+        print("  [Voice Engine] TARS neural voice pre-warmed and ready.")
+    except Exception as ex:
+        print(f"  [Voice Engine Prewarm Notice]: {ex}")
+
+threading.Thread(target=_prewarm_tars_voice, daemon=True, name="TARS-Voice-Prewarm").start()
+
 # ── ACOUSTIC COOLDOWN & ANTI-ECHO TRACKING ────────────────────────
 _last_spoken_finish_time = 0.0
 _last_spoken_history = []
@@ -1000,7 +1026,7 @@ def speak(text: str, block=False):
     done_event = threading.Event()
     speech_queue.put((text, done_event))
     if block:
-        done_event.wait(timeout=15.0)
+        done_event.wait(timeout=60.0)
 
 # Wire swarm speech_arbiter directly to main speak engine
 try:
@@ -2522,7 +2548,14 @@ def copy_file_to_clipboard_native(filepath: str) -> bool:
 
 def synthesize_tars_voice_note(recipient_name: str, message_text: str, output_path: str, creator_name: str = "Daksh") -> bool:
     try:
-        spoken_script = f"Greetings {recipient_name}. This is TARS transmitting on behalf of {creator_name}: {message_text}. End of transmission."
+        spoken_script = f"Greetings {recipient_name}. This is Point Break transmitting on behalf of {creator_name}: {message_text}. End of transmission."
+        try:
+            from tars_speak import generate_tars_audio
+            generate_tars_audio(spoken_script, output_path)
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                return True
+        except Exception as te:
+            print("TARS neural voice note error:", te)
         try:
             from gtts import gTTS
             tts = gTTS(text=spoken_script, lang='en', slow=False)
