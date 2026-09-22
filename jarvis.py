@@ -2202,10 +2202,10 @@ def take_command(timeout=None):
     r = sr.Recognizer()
     r.dynamic_energy_threshold = True
     r.dynamic_energy_adjustment_damping = 0.15
-    r.dynamic_energy_ratio = 1.40
-    r.phrase_threshold = 0.08
-    r.non_speaking_duration = 0.30
-    r.pause_threshold = 0.65  # Instant, crisp endpoint detection when user finishes speaking
+    r.dynamic_energy_ratio = 1.50
+    r.phrase_threshold = 0.20
+    r.non_speaking_duration = 0.40
+    r.pause_threshold = 1.0  # Natural conversational pause window: gives speaker time to breathe without cutoff
     listen_timeout = timeout
 
     audio = None
@@ -2216,16 +2216,16 @@ def take_command(timeout=None):
                 if not tars_speaking:
                     print("  🎤 Listening...", flush=True)
                     update_status({"status": "listening"})
-                # Throttled calibration: only re-calibrate ambient noise every 60 seconds (prevents first-syllable clipping)
+                # Calibration: set baseline energy threshold without upward inflation
                 _now_cal = time.time()
-                if not hasattr(take_command, '_last_cal_time') or (_now_cal - take_command._last_cal_time > 60.0):
+                if not hasattr(take_command, '_last_cal_time') or (_now_cal - take_command._last_cal_time > 120.0):
                     try:
-                        r.adjust_for_ambient_noise(src, duration=0.15)
+                        r.adjust_for_ambient_noise(src, duration=0.20)
                         take_command._last_cal_time = _now_cal
                     except Exception:
                         pass
-                r.energy_threshold = max(200.0, r.energy_threshold * 1.15)
-                audio = r.listen(src, timeout=listen_timeout, phrase_time_limit=10)
+                r.energy_threshold = max(180.0, r.energy_threshold)
+                audio = r.listen(src, timeout=listen_timeout, phrase_time_limit=12)
         # hardware_lock is now RELEASED — Google STT network call runs without holding the lock
         
         try:
@@ -2243,6 +2243,7 @@ def take_command(timeout=None):
                 
         q_low = q.lower().strip()
         now = time.time()
+        print(f"  🎤 [Heard]: \"{q}\"", flush=True)
 
         # 1. Deduplication Filter (ignore identical repeat within 4.0s, unless it is a wake call or affirmation)
         is_wake_or_affirm = any(w in q_low for w in ["point", "break", "brake", "tars", "jarvis", "yes", "do it", "sure"])
@@ -2250,12 +2251,12 @@ def take_command(timeout=None):
             print(f"  [Deduplication Filter] Suppressed duplicate mic query: '{q}'")
             return "none"
 
-        # 2. Acoustic Echo Filter (discard if matches what Point Break recently spoke)
-        if _last_spoken_history and (now - _last_spoken_finish_time < 6.0):
+        # 2. Acoustic Echo Filter (only discard if exact full sentence match or >=85% overlap with >=5 words)
+        if _last_spoken_history and (now - _last_spoken_finish_time < 5.0):
             q_words = set(re.findall(r'\b\w+\b', q_low))
             for past_sent in _last_spoken_history[-5:]:
-                past_words = set(re.findall(r'\b\w+\b', past_sent))
-                if q_low == past_sent or (len(q_words) >= 2 and len(q_words.intersection(past_words)) >= len(q_words) * 0.65):
+                past_words = set(re.findall(r'\b\w+\b', past_sent.lower()))
+                if q_low == past_sent.lower() or (len(q_words) >= 5 and len(q_words.intersection(past_words)) >= len(q_words) * 0.85):
                     print(f"  [Acoustic Echo Filter] Discarding speaker bleed: '{q}'")
                     return "none"
 
@@ -4396,10 +4397,9 @@ def query_generative_model_stream(model_name: str, content, system_instruction=N
     Enables sub-350ms Time-To-First-Spoken-Word for true JARVIS-speed responses.
     """
     models_to_try = [
-        "gemini-3.5-flash-lite",
         "gemini-2.5-flash",
-        "gemini-3.1-flash-lite",
         "gemini-3.5-flash",
+        "gemini-3.1-flash-lite",
         model_name
     ]
     seen = set()
@@ -5088,20 +5088,12 @@ def query_tars_ai(user_query: str, auto_speak: bool = True):
         )
 
     try:
-        streamed_sentences = []
-        def _stream_voice_chunk(sentence: str):
-            clean_s = clean_spoken_text(sentence)
-            if clean_s and len(clean_s) > 1:
-                streamed_sentences.append(clean_s)
-                if auto_speak:
-                    speak(clean_s, block=False)
-
         res = query_generative_model_stream(
-            'gemini-3.5-flash', 
+            'gemini-2.5-flash', 
             user_query, 
             system_instruction=system_instruction, 
-            on_sentence_chunk=_stream_voice_chunk,
-            timeout=15.0
+            on_sentence_chunk=None,
+            timeout=12.0
         )
         if res:
             add_conversation_turn(user_query, res)
@@ -5124,9 +5116,9 @@ def query_tars_ai(user_query: str, auto_speak: bool = True):
                     pyperclip.copy(res)
                 except Exception:
                     pass
-                if auto_speak and not streamed_sentences:
+                if auto_speak:
                     speak("Sir, I have compiled your document and rendered it directly in the Response Monolith for your review.", block=False)
-            elif auto_speak and not streamed_sentences:
+            elif auto_speak:
                 clean_rem = clean_spoken_text(res)
                 if clean_rem:
                     speak(clean_rem, block=False)
@@ -10730,8 +10722,9 @@ def _pregenerate_wake_phrases():
     Background pre-generation of common wake responses to guarantee 0ms latency.
     """
     try:
+        time.sleep(5.0)  # Yield startup resources completely to main process
         os.makedirs(_wake_cache_dir, exist_ok=True)
-        sample_phrases = ["Yes?", "Huh?", "Yeah?", "Sir?", "What now?", "WHAT NOW?!", "WHAT?!", "What do you want?!"]
+        sample_phrases = ["Yes?", "Huh?", "Yeah?", "Sir?", "What now?"]
         from tars_speak import generate_tars_audio
         for p in sample_phrases:
             slug = re.sub(r'[^a-zA-Z0-9]', '_', p.lower()).strip('_')
@@ -10741,6 +10734,7 @@ def _pregenerate_wake_phrases():
                     generate_tars_audio(p, dest)
                 except Exception:
                     pass
+                time.sleep(2.0)  # Gentle spacing so CPU is never locked
     except Exception:
         pass
 
@@ -10840,13 +10834,17 @@ def tars_main_loop():
             continue
         try:
             now = time.time()
-            if conv_state == "ACTIVE" and now > active_until:
+            # If Point Break spoke recently, keep conversational session alive for 45s so the user can converse seamlessly
+            if _last_spoken_finish_time > 0 and (now - _last_spoken_finish_time < 45.0):
+                conv_state = "ACTIVE"
+                active_until = max(active_until, _last_spoken_finish_time + 45.0)
+            elif conv_state == "ACTIVE" and now > active_until:
                 conv_state = "STANDBY"
                 print("  💤 [Conversational Window]: Reverted to STANDBY mode.")
                 update_status({"status": "standby"})
 
-            # Use shorter timeout in ACTIVE mode so the state machine can check session expiry
-            _listen_timeout = 5.0 if conv_state == "ACTIVE" else 6.0
+            # Responsive microphone listening timeout
+            _listen_timeout = 4.0 if conv_state == "ACTIVE" else 5.0
             q = take_command(timeout=_listen_timeout)
             if not q or q == "none":
                 continue
@@ -10863,7 +10861,7 @@ def tars_main_loop():
 
             if matched_wake:
                 conv_state = "ACTIVE"
-                active_until = now + 15.0
+                active_until = now + 45.0
                 
                 # Check if user spoke ONLY the wake phrase
                 cmd = q_clean
@@ -10873,13 +10871,13 @@ def tars_main_loop():
                     cmd = cmd.replace(matched_wake, "", 1).strip(" ,.-")
 
                 if not cmd:
-                    print("  ⚡ [Wake Phrase Detected]: Session ACTIVE for 15 seconds.")
+                    print("  ⚡ [Wake Phrase Detected]: Session ACTIVE for 45 seconds.")
                     play_wake_response()
                     continue
                 else:
                     _wake_call_streak = 0
                     print(f"  ⚡ [Wake + Command]: '{cmd}'")
-                    active_until = time.time() + 15.0
+                    active_until = time.time() + 45.0
                     threading.Thread(target=play_instant_filler, daemon=True).start()
                     execute(cmd)
                     continue
@@ -10888,35 +10886,38 @@ def tars_main_loop():
             if conv_state == "ACTIVE":
                 _wake_call_streak = 0
                 print(f"  ⚡ [Active Session Command]: '{q}'")
-                active_until = time.time() + 15.0
+                active_until = time.time() + 45.0
                 threading.Thread(target=play_instant_filler, daemon=True).start()
                 execute(q)
                 continue
 
             # In STANDBY: Check if this is an affirmative confirmation for an action
-            has_pending = bool(memory.get("pending_action") or (now - _last_spoken_finish_time < 15.0))
+            has_pending = bool(memory.get("pending_action") or (now - _last_spoken_finish_time < 30.0))
             is_affirmative = any(q_clean == aff or q_clean.startswith(aff + " ") for aff in affirmations)
 
             if has_pending and is_affirmative:
                 _wake_call_streak = 0
                 conv_state = "ACTIVE"
-                active_until = now + 15.0
+                active_until = now + 45.0
                 print(f"  ⚡ [Standby Affirmation Executing]: '{q}'")
                 threading.Thread(target=play_instant_filler, daemon=True).start()
                 execute(q)
                 continue
 
-            # In STANDBY: Check if user spoke a direct high-intent query without prefix
-            if any(q_clean.startswith(p + " ") or q_clean == p for p in direct_intent_prefixes):
+            # In STANDBY: Check if user spoke a command, question, or sentence to Point Break
+            is_recent = (_last_spoken_finish_time > 0 and (now - _last_spoken_finish_time < 45.0))
+            is_direct = any(q_clean.startswith(p + " ") or q_clean == p for p in direct_intent_prefixes)
+            is_multiword = len(q_clean.split()) >= 3
+
+            if is_recent or is_direct or is_multiword:
                 conv_state = "ACTIVE"
-                active_until = now + 15.0
+                active_until = now + 45.0
                 _wake_call_streak = 0
-                print(f"  ⚡ [Direct Query Detected]: '{q}'")
+                print(f"  ⚡ [Mic Conversational Input]: '{q}'")
                 threading.Thread(target=play_instant_filler, daemon=True).start()
                 execute(q)
                 continue
 
-            # Otherwise in STANDBY, background chatter / ambient noise without wake word is ignored
             print(f"  [Standby Filtered - Wake Word Required]: '{q}'")
 
         except Exception as main_err:
