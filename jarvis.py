@@ -2201,9 +2201,9 @@ def take_command(timeout=None):
         
     r = sr.Recognizer()
     r.dynamic_energy_threshold = False
-    r.phrase_threshold = 0.15
-    r.non_speaking_duration = 0.25
-    r.pause_threshold = 0.75  # Snappy, natural conversational pause window (0.75s)
+    r.phrase_threshold = 0.10
+    r.non_speaking_duration = 0.50  # 500ms window preserves aspirated 'H' in 'Hey' and prevents start/end clipping
+    r.pause_threshold = 1.10  # Natural conversational pause window: gives speaker time to say 'Hey [pause] Point Break' without cutting off
     listen_timeout = timeout
 
     audio = None
@@ -2215,14 +2215,14 @@ def take_command(timeout=None):
                 _now_cal = time.time()
                 if not hasattr(take_command, '_last_cal_time') or (_now_cal - take_command._last_cal_time > 60.0):
                     try:
-                        r.energy_threshold = 35.0  # Seed low so adjust_for_ambient_noise converges to real room floor
+                        r.energy_threshold = 20.0  # Seed low so adjust_for_ambient_noise converges to real room floor
                         r.adjust_for_ambient_noise(src, duration=0.25)
-                        take_command._cached_threshold = max(40.0, min(85.0, r.energy_threshold * 1.15))
+                        take_command._cached_threshold = max(20.0, min(45.0, r.energy_threshold * 1.20))
                         take_command._last_cal_time = _now_cal
                     except Exception:
-                        take_command._cached_threshold = 50.0
+                        take_command._cached_threshold = 28.0
 
-                r.energy_threshold = getattr(take_command, '_cached_threshold', 50.0)
+                r.energy_threshold = getattr(take_command, '_cached_threshold', 28.0)
                 if not tars_speaking:
                     print(f"  🎤 Listening... [Sensitivity: {r.energy_threshold:.1f}]", flush=True)
                     update_status({"status": "listening"})
@@ -2295,15 +2295,18 @@ def wait_for_wake():
 
     WAKE_PHRASES = [
         "point break", "pointbreak", "hey point break", "hey pointbreak",
-        "hey point brake", "point brake", "hey point", "point", "break", "paint break",
-        "hey jarvis", "jarvis", "hey tars", "tars", "friday"
+        "hey point brake", "point brake", "a point break", "a pointbreak", "a point brake",
+        "eight point break", "high point break", "hey point blank",
+        "hey point", "point", "break", "paint break",
+        "hey jarvis", "jarvis", "hey tars", "tars", "friday",
+        "hey", "hello", "hi"
     ]
 
     r = sr.Recognizer()
     r.dynamic_energy_threshold = False
-    r.pause_threshold = 0.60
+    r.pause_threshold = 1.00
     r.phrase_threshold = 0.08
-    r.non_speaking_duration = 0.25
+    r.non_speaking_duration = 0.50
 
     print("\n  ⏳ STANDBY — listening for 'Point Break' / 'Hey Jarvis'...")
 
@@ -2315,11 +2318,11 @@ def wait_for_wake():
             with hardware_lock:
                 with sr.Microphone() as src:
                     try:
-                        r.energy_threshold = 35.0
+                        r.energy_threshold = 20.0
                         r.adjust_for_ambient_noise(src, duration=0.20)
-                        r.energy_threshold = max(40.0, min(85.0, r.energy_threshold * 1.15))
+                        r.energy_threshold = max(20.0, min(45.0, r.energy_threshold * 1.20))
                     except Exception:
-                        r.energy_threshold = 50.0
+                        r.energy_threshold = 28.0
                     audio = r.listen(src, timeout=6, phrase_time_limit=6)
                 try:
                     text = r.recognize_google(audio, language="en-IN").lower().strip()
@@ -10822,8 +10825,11 @@ def tars_main_loop():
     active_until = 0.0
     wake_triggers = [
         "hey point break", "hey pointbreak", "point break", "pointbreak",
-        "hey point brake", "point brake", "hey point", "point", "break", "paint break",
-        "hey jarvis", "jarvis", "hey tars", "tars"
+        "hey point brake", "point brake", "a point break", "a pointbreak", "a point brake",
+        "eight point break", "high point break", "hey point blank",
+        "hey point", "point", "break", "paint break",
+        "hey jarvis", "jarvis", "hey tars", "tars",
+        "hey", "hello", "hi", "a"
     ]
     affirmations = [
         "yes", "do it", "sure", "proceed", "go ahead", "yeah", "yep", "confirm", "ok", "okay", "please do"
