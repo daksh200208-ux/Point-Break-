@@ -1220,6 +1220,8 @@ def speech_worker():
 
 # Start Speech Worker thread immediately on boot
 threading.Thread(target=speech_worker, daemon=True).start()
+# Pre-warm TARS neural voice in background so first wake reply is instantaneous
+threading.Thread(target=lambda: __import__('tars_speak').get_tars_model_and_voice(), daemon=True).start()
 
 def _verbal_barge_in_worker():
     """
