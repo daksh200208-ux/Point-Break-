@@ -66,13 +66,18 @@ def get_tars_model_and_voice():
 
         return _MODEL_INSTANCE, _TARS_VOICE_STATE
 
+TARS_CLOUD_URL = os.environ.get("TARS_CLOUD_URL", "").strip()
+
 def generate_tars_audio(text: str, output_path: str = None) -> str:
     """
     Generates audio in TARS's voice for the given text.
     Returns the path to the saved 16-bit PCM WAV file.
+
+    HYBRID ARCHITECTURE:
+    1. Online Cloud GPU: When TARS_CLOUD_URL is configured and reachable (~0.7s latency).
+    2. Local Offline Fallback: 4-thread multi-core CPU Pocket TTS (100% offline autonomy).
     """
     text = clean_phonetics(text)
-    model, voice_state = get_tars_model_and_voice()
     
     if output_path is None:
         temp_dir = os.path.join(MODULE_DIR, "scratch", "audio")
@@ -82,7 +87,25 @@ def generate_tars_audio(text: str, output_path: str = None) -> str:
     else:
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
+    # 1. ONLINE CLOUD GPU ENGINE (Fast ~0.7s, Zero CPU usage)
+    cloud_url = os.environ.get("TARS_CLOUD_URL", TARS_CLOUD_URL).strip()
+    if cloud_url:
+        try:
+            import requests
+            ep = cloud_url.rstrip("/") + "/generate"
+            r = requests.post(ep, json={"text": text}, timeout=4.5)
+            if r.status_code == 200 and len(r.content) > 500:
+                with open(output_path, "wb") as f:
+                    f.write(r.content)
+                return output_path
+        except Exception as cloud_err:
+            print(f"  [TARS Cloud Voice Notice]: Cloud endpoint unreachable ({cloud_err}). Engaging local offline engine...")
+
+    # 2. LOCAL OFFLINE MULTI-THREADED ENGINE (4-Thread CPU Pocket TTS)
+    model, voice_state = get_tars_model_and_voice()
     with _TARS_LOCK:
+        import torch
+        torch.set_num_threads(4)  # Multi-threaded CPU execution
         audio_tensor = model.generate_audio(voice_state, text)
     data = audio_tensor.numpy().astype(np.float32)
 

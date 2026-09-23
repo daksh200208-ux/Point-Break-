@@ -858,7 +858,17 @@ def speech_worker():
 
         base_stem = os.path.splitext(out_path)[0]
 
-        # 1. PRIMARY HIGH-SPEED ENGINE: Edge TTS (Instant cloud neural audio: ~1.5s latency, zero pauses)
+        # 1. PRIMARY ENGINE: Authentic TARS Voice (Cloud GPU ~0.7s when online, 4-Thread Local when offline)
+        try:
+            from tars_speak import generate_tars_audio
+            wav_target = base_stem + ".wav"
+            res = generate_tars_audio(cleaned_text, wav_target)
+            if res and os.path.exists(res) and os.path.getsize(res) > 0:
+                return res
+        except Exception as tars_err:
+            print(f"  [TARS Voice Engine Error]: {tars_err} (Engaging emergency backup)")
+
+        # 2. EMERGENCY BACKUP: Edge TTS (Only if both Cloud & Local TARS fail unexpectedly)
         try:
             mp3_target = base_stem + ".mp3"
             if protocol_omega_active:
@@ -869,17 +879,7 @@ def speech_worker():
             if os.path.exists(mp3_target) and os.path.getsize(mp3_target) > 0:
                 return mp3_target
         except Exception as cloud_err:
-            print(f"  [Edge TTS Cloud Error]: {cloud_err} (Engaging local fallback)")
-
-        # 2. LOCAL OFFLINE FALLBACK: Cloned TARS Voice via Pocket TTS (Used when offline or on GPU)
-        try:
-            from tars_speak import generate_tars_audio
-            wav_target = base_stem + ".wav"
-            generate_tars_audio(cleaned_text, wav_target)
-            if os.path.exists(wav_target) and os.path.getsize(wav_target) > 0:
-                return wav_target
-        except Exception as local_err:
-            print(f"  [Pocket TTS Fallback Error]: {local_err}")
+            print(f"  [Emergency Backup Error]: {cloud_err}")
 
         return None
 
