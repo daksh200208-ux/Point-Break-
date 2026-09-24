@@ -70,6 +70,93 @@ def test_canonical_train_booking():
     assert "extracted_data" in result
     print(f"✔ Canonical workflow succeeded! PNR: {result['extracted_data'].get('pnr')}")
 
+def test_office_and_data_forge():
+    print("\n--- TEST 4: SPRINT 2 OFFICE & DATA FORGE ---")
+    from tools.registry import tool_registry
+
+    # 1. Spreadsheet creation & reading
+    ss_res = tool_registry.execute(
+        "create_spreadsheet",
+        output_path="test_metrics.xlsx",
+        data=[{"Quarter": "Q1", "Revenue": 125000}, {"Quarter": "Q2", "Revenue": 180000}, {"Quarter": "Q3", "Revenue": 240000}]
+    )
+    assert ss_res["success"] is True and os.path.exists("test_metrics.xlsx")
+    print("✔ create_spreadsheet -> test_metrics.xlsx created")
+
+    read_res = tool_registry.execute("read_spreadsheet", file_path="test_metrics.xlsx")
+    assert read_res["success"] is True and read_res["total_rows"] == 3
+    print(f"✔ read_spreadsheet -> verified {read_res['total_rows']} rows")
+
+    # 2. Matplotlib Chart generation
+    chart_res = tool_registry.execute(
+        "generate_chart",
+        file_path="test_metrics.xlsx",
+        x_col="Quarter",
+        y_col="Revenue",
+        chart_type="bar",
+        title="Quarterly Growth",
+        output_png="test_growth_chart.png"
+    )
+    assert chart_res["success"] is True and os.path.exists("test_growth_chart.png")
+    print("✔ generate_chart -> test_growth_chart.png generated")
+
+    # 3. PowerPoint 16:9 Presentation creation
+    ppt_res = tool_registry.execute(
+        "create_presentation",
+        title="Point Break Architecture Overview",
+        subtitle="Sprint 2 Automated Delivery",
+        output_path="test_architecture.pptx"
+    )
+    assert ppt_res["success"] is True and os.path.exists("test_architecture.pptx")
+    print(f"✔ create_presentation -> test_architecture.pptx ({ppt_res['total_slides']} slides)")
+
+    # 4. Word (.docx) Document creation
+    doc_res = tool_registry.execute(
+        "create_document",
+        title="Point Break S-Tier Architecture Whitepaper",
+        sections=[
+            {"heading": "1. Mission Objectives", "body": "Transform Point Break into an autonomous Personal Assistant runtime."},
+            {"heading": "2. Security Matrix", "body": "Enforce strict R0-R4 boundaries with tactical human takeover."}
+        ],
+        output_path="test_whitepaper.docx"
+    )
+    assert doc_res["success"] is True and os.path.exists("test_whitepaper.docx")
+    print(f"✔ create_document -> test_whitepaper.docx ({doc_res['sections_count']} sections)")
+
+    # 5. Deep Research Dossier
+    dossier_res = tool_registry.execute("deep_research", topic="Local INT8 LLM Quantization vs Cloud GPU")
+    assert dossier_res["success"] is True and len(dossier_res["sections"]) == 4
+    print(f"✔ deep_research -> synthesized dossier on '{dossier_res['topic']}'")
+
+    # Cleanup test artifacts
+    for f in ["test_metrics.xlsx", "test_growth_chart.png", "test_architecture.pptx", "test_whitepaper.docx"]:
+        if os.path.exists(f):
+            try: os.remove(f)
+            except: pass
+
+def test_commerce_and_meetings():
+    print("\n--- TEST 5: SPRINT 2 COMMERCE & MEETINGS ---")
+    from tools.registry import tool_registry
+
+    # 1. Product Search
+    prod_res = tool_registry.execute("search_products", query="mechanical keyboard", platform="amazon", max_budget=3500)
+    assert prod_res["success"] is True and len(prod_res["top_products"]) > 0
+    print(f"✔ search_products -> {prod_res['query']} on {prod_res['platform']}")
+
+    # 2. Food Delivery Comparison
+    food_res = tool_registry.execute("order_food", query="order sweet lassi from swiggy or zomato whichever is cheaper")
+    assert food_res["success"] is True and "swiggy" in food_res["recommended_platform"].lower()
+    print(f"✔ order_food -> {food_res['dish']} (Recommended: {food_res['recommended_platform']})")
+
+    # 3. Meeting Intelligence
+    m_res = tool_registry.execute("prepare_meeting_briefing", meeting_title="Sprint 2 Review", attendees=["Daksh", "Engineering Lead"])
+    assert m_res["success"] is True and "Daksh" in m_res["briefing"]
+    print("✔ prepare_meeting_briefing -> briefing generated")
+
+    action_res = tool_registry.execute("extract_action_items", notes_or_transcript="- Deploy agent runtime to staging\n- Review test logs\n- TODO: confirm train ticket")
+    assert action_res["success"] is True and action_res["action_items_count"] >= 2
+    print(f"✔ extract_action_items -> extracted {action_res['action_items_count']} action items")
+
 if __name__ == "__main__":
     print("==================================================")
     print(" POINT BREAK AUTONOMOUS RUNTIME TEST SUITE")
@@ -77,6 +164,8 @@ if __name__ == "__main__":
     test_risk_classification()
     test_state_persistence()
     test_canonical_train_booking()
+    test_office_and_data_forge()
+    test_commerce_and_meetings()
     print("\n==================================================")
     print(" ALL TESTS PASSED SUCCESSFULLY! ")
     print("==================================================")

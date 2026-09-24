@@ -68,6 +68,16 @@ Canonical Actions you can use:
 - "get_schedule": params = {{"date": "..."}}
 - "create_calendar_event": params = {{"title": "...", "start": "...", "end": "..."}}
 - "daily_briefing": params = {{}}
+- "create_spreadsheet": params = {{"output_path": "...", "data": [{{"col": "val"}}]}}
+- "generate_chart": params = {{"file_path": "...", "x_col": "...", "y_col": "...", "chart_type": "bar"}}
+- "create_presentation": params = {{"title": "...", "subtitle": "...", "slides_data": [{{"title": "...", "points": ["..."]}}]}}
+- "create_document": params = {{"title": "...", "sections": [{{"heading": "...", "body": "..."}}]}}
+- "extract_pdf_text": params = {{"pdf_path": "..."}}
+- "search_products": params = {{"query": "...", "platform": "amazon"}}
+- "order_food": params = {{"query": "..."}}
+- "prepare_meeting_briefing": params = {{"meeting_title": "..."}}
+- "extract_action_items": params = {{"notes_or_transcript": "..."}}
+- "deep_research": params = {{"topic": "..."}}
 - "open_url": params = {{"url": "..."}}
 - "click": params = {{"target": "..."}}
 - "type_text": params = {{"target": "...", "text": "..."}}
@@ -197,6 +207,91 @@ Rules:
                     action="daily_briefing",
                     parameters={},
                     description="Generate comprehensive daily briefing and agenda",
+                    risk_level="R0"
+                )
+            ]
+
+        # 4. Presentation & Slide Deck Creation
+        if "presentation" in low or "slide" in low or "powerpoint" in low or "deck" in low:
+            return [
+                TaskStep(
+                    index=0,
+                    action="create_presentation",
+                    parameters={"title": clean_goal.title(), "subtitle": "Point Break Automated Presentation"},
+                    description="Generate 16:9 PowerPoint presentation deck with speaker notes",
+                    risk_level="R1"
+                )
+            ]
+
+        # 5. Spreadsheet & Tabular Analysis
+        if "spreadsheet" in low or "excel" in low or "csv" in low or "chart" in low:
+            return [
+                TaskStep(
+                    index=0,
+                    action="create_spreadsheet",
+                    parameters={
+                        "output_path": "point_break_data.xlsx",
+                        "data": [{"Metric": "Q1", "Score": 88}, {"Metric": "Q2", "Score": 94}, {"Metric": "Q3", "Score": 99}]
+                    },
+                    description="Compile tabular dataset into spreadsheet",
+                    risk_level="R1"
+                ),
+                TaskStep(
+                    index=1,
+                    action="generate_chart",
+                    parameters={"file_path": "point_break_data.xlsx", "x_col": "Metric", "y_col": "Score", "chart_type": "bar"},
+                    description="Plot high-resolution data visualization chart",
+                    risk_level="R1"
+                )
+            ]
+
+        # 6. Document Generation & Proofreading
+        if "document" in low or "docx" in low or "report" in low or "letter" in low:
+            return [
+                TaskStep(
+                    index=0,
+                    action="create_document",
+                    parameters={
+                        "title": clean_goal.title(),
+                        "sections": [{"heading": "Overview", "body": f"Report regarding: {clean_goal}"}]
+                    },
+                    description="Author formatted Word (.docx) document",
+                    risk_level="R1"
+                )
+            ]
+
+        # 7. Shopping & Product Search
+        if "buy" in low or "shop" in low or "amazon" in low or "flipkart" in low or "product" in low:
+            return [
+                TaskStep(
+                    index=0,
+                    action="search_products",
+                    parameters={"query": clean_goal, "platform": "amazon"},
+                    description="Perform automated product and price search",
+                    risk_level="R0"
+                )
+            ]
+
+        # 8. Food Delivery Comparison
+        if "food" in low or "zomato" in low or "swiggy" in low or "order food" in low or "pizza" in low or "biryani" in low:
+            return [
+                TaskStep(
+                    index=0,
+                    action="order_food",
+                    parameters={"query": clean_goal},
+                    description="Compare dish prices between Swiggy and Zomato and prepare cart",
+                    risk_level="R1"
+                )
+            ]
+
+        # 9. Deep Research Dossier
+        if "research" in low or "dossier" in low or "investigate" in low:
+            return [
+                TaskStep(
+                    index=0,
+                    action="deep_research",
+                    parameters={"topic": clean_goal},
+                    description="Synthesize multi-source research dossier with citations",
                     risk_level="R0"
                 )
             ]

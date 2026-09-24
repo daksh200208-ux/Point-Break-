@@ -23,8 +23,15 @@ try:
     import tools.travel.train_engine
     import tools.communications.email_agent
     import tools.system.calendar_agent
+    import tools.system.meeting_engine
     import tools.computer.visual_grounding
     import tools.computer.uia_driver
+    import tools.office.spreadsheet_engine
+    import tools.office.presentation_engine
+    import tools.office.document_engine
+    import tools.office.research_engine
+    import tools.commerce.shopping_sniper
+    import tools.commerce.food_delivery
 except Exception as _tool_err:
     print(f"[AgentRuntime] Warning importing tools: {_tool_err}")
 
