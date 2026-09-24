@@ -22,7 +22,11 @@ dist/
 
 # Dynamic User Memory & Session Data
 jarvis_memory.json
+user_profile.json
 tars_licenses.json
+*.db
+*.jsonl
+active_task.json
 *.log
 *.tmp
 scratch/

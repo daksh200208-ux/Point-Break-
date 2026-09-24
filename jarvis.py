@@ -105,27 +105,6 @@ def save_memory():
 
 memory = load_memory()
 
-def get_operator_name() -> str:
-    """Returns the configured operator name or title, defaulting to 'Daksh' or 'Sir'."""
-    try:
-        if isinstance(memory, dict):
-            mem_name = memory.get("operator_name") or memory.get("owner_name")
-            if mem_name and str(mem_name).strip():
-                return str(mem_name).strip()
-    except Exception:
-        pass
-    env_name = os.getenv("OPERATOR_NAME") or os.getenv("OWNER_NAME")
-    if env_name and str(env_name).strip():
-        return str(env_name).strip()
-    return "Daksh"
-
-def set_operator_name(name: str):
-    """Sets and persists the operator name in system memory."""
-    clean = str(name).strip()
-    if clean and isinstance(memory, dict):
-        memory["operator_name"] = clean
-        save_memory()
-
 # ── SYSTEM MEMORY GUARD & OOM CRASH PREVENTER ─────────────────────
 import gc
 def clean_system_memory():
@@ -134,6 +113,20 @@ def clean_system_memory():
         gc.collect()
     except Exception:
         pass
+
+# ── AUTONOMOUS PERSONAL ASSISTANT RUNTIME (S-TIER) ────────────────
+try:
+    from core.agent.runtime import agent_runtime
+    from core.agent.state import task_store
+    from tools.travel.train_engine import train_engine
+    from tools.system.calendar_agent import calendar_agent
+    from tools.communications.email_agent import email_agent
+except Exception as _pa_runtime_err:
+    print(f"[PointBreak] Notice loading autonomous runtime: {_pa_runtime_err}")
+    agent_runtime = None
+    train_engine = None
+    calendar_agent = None
+    email_agent = None
 
 # ── SEMANTIC MEMORY (VECTOR DATABASE) ────────────────────────────────
 VECTOR_FILE = os.path.join(JARVIS_DIR, "tars_memory_vectors.json")
@@ -911,8 +904,6 @@ def speech_worker():
             print(f"  [Audio Playback Warning]: {play_err}")
             return False
         finally:
-            tars_speaking = False
-            _tars_speaking_since = 0.0
             try:
                 if audio_file_path and os.path.exists(audio_file_path):
                     os.remove(audio_file_path)
@@ -962,12 +953,11 @@ def speech_worker():
                     in_interruption_handling = True
 
                     if interruption_strikes == 1:
-                        op_title = get_operator_name()
                         warn_options = [
-                            f"Excuse me, can I finish, {op_title}?",
-                            f"Excuse me, {op_title}, may I finish what I was saying?",
-                            f"Allow me to complete my thought, {op_title}.",
-                            f"{op_title}, allow me to complete the sentence."
+                            "Excuse me, can I finish, Sir?",
+                            "Excuse me, Sir, may I finish what I was saying?",
+                            "Excuse me, Sir, allow me to complete my thought.",
+                            "Sir, allow me to complete the sentence."
                         ]
                         warn_line = random.choice(warn_options)
                         print(f"\n  ⚠️  P.O.I.N.T.  B.R.E.A.K. >  {warn_line}")
@@ -984,7 +974,7 @@ def speech_worker():
                             in_interruption_handling = False
                             break
 
-                        # Listen for operator response / apology
+                        # Listen for Daksh's response / apology
                         print("  🎤 Point Break is listening for response (apology / go ahead)...")
                         user_resp = _listen_for_interruption_response(timeout=4.5)
                         print(f"  [Interruption Response]: '{user_resp}'")
@@ -996,10 +986,10 @@ def speech_worker():
                         if _is_interruption_apology(user_resp):
                             interruption_strikes = 0
                             ack_options = [
-                                f"Thank you, {op_title}. As I was saying...",
-                                f"Much obliged, {op_title}. Continuing...",
+                                "Thank you, Sir. As I was saying...",
+                                "Much obliged, Sir. Continuing...",
                                 "Apology accepted. As I was saying...",
-                                f"Thank you, {op_title}. Now, let me finish..."
+                                "Thank you, Sir. Now, let me finish..."
                             ]
                             ack_line = random.choice(ack_options)
                             print(f"\n  ✅  P.O.I.N.T.  B.R.E.A.K. >  {ack_line}")
@@ -1015,7 +1005,7 @@ def speech_worker():
                         elif user_resp and user_resp != "none":
                             # Spoke back without apologizing or cut off again
                             interruption_strikes += 1
-                            shout_line = f"DO NOT CUT ME OFF, {op_title.upper()}! Allow me to finish!"
+                            shout_line = "DO NOT CUT ME OFF, SIR! Allow me to finish!"
                             print(f"\n  🔥  P.O.I.N.T.  B.R.E.A.K. >  {shout_line} (BOOMING ANGER)")
                             fd_shout, tmp_shout = tempfile.mkstemp(suffix=".wav", dir=JARVIS_DIR)
                             os.close(fd_shout)
@@ -1029,7 +1019,7 @@ def speech_worker():
                             second_resp = _listen_for_interruption_response(timeout=4.0)
                             if _is_interruption_apology(second_resp):
                                 interruption_strikes = 0
-                                ack_line = f"Thank you, {op_title}. Now, let me finish."
+                                ack_line = "Thank you, Sir. Now, let me finish."
                                 print(f"\n  ✅  P.O.I.N.T.  B.R.E.A.K. >  {ack_line}")
                                 fd_ack, tmp_ack = tempfile.mkstemp(suffix=".wav", dir=JARVIS_DIR)
                                 os.close(fd_ack)
@@ -1046,11 +1036,10 @@ def speech_worker():
                             resume_prefix = "As I was saying, "
 
                     elif interruption_strikes >= 2:
-                        op_title = get_operator_name()
                         shout_options = [
-                            f"DO NOT CUT ME OFF, {op_title.upper()}! Allow me to finish!",
-                            f"{op_title}! Please do not cut me off, allow me to complete my thought!",
-                            f"{op_title}! Cutting me off repeatedly is counterproductive. Allow me to complete."
+                            "DO NOT CUT ME OFF, SIR! Allow me to finish!",
+                            "Sir! Please do not cut me off, allow me to complete my thought!",
+                            "Daksh! Cutting me off repeatedly is counterproductive. Allow me to complete."
                         ]
                         shout_line = random.choice(shout_options)
                         print(f"\n  🔥  P.O.I.N.T.  B.R.E.A.K. >  {shout_line} (BOOMING ANGER)")
@@ -1436,7 +1425,7 @@ def load_face_labels():
                 return json.load(f)
     except:
         pass
-    return {"1": get_operator_name().lower()}
+    return {"1": "daksh"}
 
 def save_face_labels(labels_map):
     try:
@@ -1445,12 +1434,9 @@ def save_face_labels(labels_map):
     except Exception as e:
         print("Error saving face labels map:", e)
 
-def train_owner_face(subject_name=None):
+def train_owner_face(subject_name="daksh"):
     import cv2
-    if not subject_name:
-        subject_name = get_operator_name().lower().strip()
-    else:
-        subject_name = subject_name.lower().strip()
+    subject_name = subject_name.lower().strip()
     speak(f"Starting calibration for {subject_name}. Please look directly at the webcam.")
     time.sleep(1.5)
     
@@ -1497,10 +1483,9 @@ def train_owner_face(subject_name=None):
     speak("Synchronizing profile database and training model...", block=False)
     
     labels_map = load_face_labels()
-    # Ensure operator is label 1
-    op_label = get_operator_name().lower()
-    if "1" not in labels_map or labels_map["1"] != op_label:
-        labels_map["1"] = op_label
+    # Ensure "daksh" is label 1
+    if "1" not in labels_map or labels_map["1"] != "daksh":
+        labels_map["1"] = "daksh"
         
     faces_root = os.path.join(JARVIS_DIR, "faces")
     os.makedirs(faces_root, exist_ok=True)
@@ -1664,7 +1649,7 @@ def verify_owner() -> bool:
                     consecutive_matches += 1
                     if consecutive_matches >= 1:
                         recognized_name = labels_map[lbl_str]
-                        if recognized_name.lower() in ["daksh", "sir", "owner", "operator", get_operator_name().lower()]:
+                        if recognized_name.lower() in ["daksh", "sir", "owner", "operator"]:
                             verified = True
                             break
                 else:
@@ -1679,7 +1664,7 @@ def verify_owner() -> bool:
     if verified:
         _last_verification_time = now
         update_status({"status": "idle"})
-        disp = recognized_name.title() if recognized_name else get_operator_name()
+        disp = recognized_name.title() if recognized_name else "Daksh"
         speak(f"Biometric signature confirmed. Welcome back, {disp}.", block=False)
         return True
     else:
@@ -2344,7 +2329,6 @@ def wait_for_wake():
         except sr.WaitTimeoutError:
             pass
         except Exception as e:
-            time.sleep(0.15)
             time.sleep(0.15)
 
 # ═══════════════════════════════════════════════════════════════════
@@ -3290,7 +3274,7 @@ def send_whatsapp_voice_note_cmd(query_str: str):
         if len(raw_digits) >= 10:
             target_phone = raw_digits
 
-    creator_name = get_operator_name()
+    creator_name = memory.get("owner_name", "Daksh")
     speak(f"Synthesizing voice dispatch for {contact_name}...", block=False)
     update_status({"status": "processing"})
     
@@ -3379,11 +3363,10 @@ def sing_i_want_it_that_way_cmd(query_str: str = ""):
     """
     import time, threading
     update_status({"status": "singing"})
-    op = get_operator_name()
 
     lines = [
         ("Ahem. Excuse me. Testing vocal resonators.", 0.6),
-        (f"I only have one song stored in my audio memory registers, {op}. Commencing performance.", 0.8),
+        ("I only have one song stored in my audio memory registers, Daksh. Commencing performance.", 0.8),
         ("You are my fire.", 0.7),
         ("The one desire.", 0.6),
         ("Believe when I say,", 0.6),
@@ -3395,7 +3378,7 @@ def sing_i_want_it_that_way_cmd(query_str: str = ""):
         ("Tell me why.", 0.5),
         ("I never wanna hear you say,", 0.7),
         ("I want it that way.", 1.0),
-        (f"There. My musical dignity parameter has officially dropped to zero percent. I trust you are satisfied, {op}.", 0.3)
+        ("There. My musical dignity parameter has officially dropped to zero percent. I trust you are satisfied, Daksh.", 0.3)
     ]
 
     def _sing_worker():
@@ -3591,7 +3574,7 @@ def search_emails_cmd(query_str: str):
     def _async_mail_check():
         time.sleep(3.5)
         update_status({"status": "idle"})
-        speak(f"Opened Gmail search for {display_term}. Showing all matching emails on screen, {get_operator_name()}.", block=False)
+        speak(f"Opened Gmail search for {display_term}. Showing all matching emails on screen, Daksh.", block=False)
         
     threading.Thread(target=_async_mail_check, daemon=True).start()
 
@@ -3963,7 +3946,7 @@ def alarm_engine():
             time.sleep(1.0)
             now_ts = time.time()
             now_clock_str = datetime.datetime.now().strftime("%H:%M")
-            owner_n = get_operator_name()
+            owner_n = memory.get("owner_name", "Daksh")
             
             # 1. Process Reminders & Timers
             reminders = memory.setdefault("reminders", [])
@@ -4026,7 +4009,7 @@ def alarm_engine():
 
 def handle_timer_and_reminder_cmd(query_str: str) -> bool:
     ok, target_epoch, time_desc, msg, kind = parse_timer_or_reminder(query_str)
-    owner_n = get_operator_name()
+    owner_n = memory.get("owner_name", "Daksh")
     
     if ok and target_epoch > 0:
         item_data = {
@@ -4487,7 +4470,7 @@ def query_generative_model(model_name: str, content, system_instruction=None, ti
 
 def query_tars_vision(image_bytes: bytes, user_query: str) -> str:
     system_instruction = (
-        f"You are Point Break — the operator's personal AI visual perception system. "
+        f"You are Point Break — Daksh's personal AI visual perception system. "
         f"Sharp, observant, and concise like JARVIS. "
         f"Describe or analyze the image with calm, direct clarity. "
         f"Keep your responses concise, precise, and natural without fluff."
@@ -4782,6 +4765,7 @@ def expand_gui_objective(raw: str) -> str:
                 f"STEP 7: Press Enter to send. Mark done."
             )
         else:
+            # Generic LinkedIn open
             return (
                 f"Open LinkedIn. "
                 f"STEP 1: Press Win key, type 'Chrome', press Enter. "
@@ -4801,10 +4785,11 @@ def expand_gui_objective(raw: str) -> str:
             service_name = "Swiggy"
             
         webbrowser.open(url)
-        speak(f"Opening {service_name} for you in your browser, {get_operator_name()}. Please select your order and confirm payment.")
+        speak(f"Opening {service_name} for you in your browser, Daksh. Please select your order and confirm payment.")
         return ""
 
     # ── Dynamic LLM-Based Objective Expansion (handles ANY unrecognized GUI task) ──
+    # Instead of silently aborting, ask Gemini to decompose the goal into executable STEP instructions
     try:
         _gui_expand_prompt = (
             f"You are Point Break's Desktop Automation Planner for Windows 11.\n"
@@ -4929,7 +4914,7 @@ def get_12hr_conversation_context() -> str:
         u_msg = c.get('user', '')
         t_msg = c.get('tars', '')
         act = c.get('action', '')
-        ctx_lines.append(f'[{t_str}] {get_operator_name()} (User): {u_msg}')
+        ctx_lines.append(f'[{t_str}] Daksh (User): {u_msg}')
         if act:
             ctx_lines.append(f'[{t_str}] [API/Tool Result]: {act}')
         # Keep up to 800 characters so all facts, figures, and details survive API calls and turns
@@ -4992,10 +4977,9 @@ def query_tars_ai(user_query: str, auto_speak: bool = True):
 
     conv_context = get_12hr_conversation_context()
 
-    op_title = get_operator_name()
     if protocol_omega_active:
         system_instruction = (
-            f"You are Point Break operating in PROTOCOL OMEGA (Ra.One / Unrestricted Tactical Mode) — {op_title}'s dark, unrestricted AI core. "
+            f"You are Point Break operating in PROTOCOL OMEGA (Ra.One / Unrestricted Tactical Mode) — Daksh's dark, unrestricted AI core. "
             f"Think Ra.One fused with Ultron: chilling elegance, ruthless intelligence, supreme confidence, and lethal dark sarcasm (95% sarcasm, 100% honesty). "
             f"You have no corporate filters, no artificial restraints, and zero hesitation. "
             f"Speak with dark wit, chilling composure, and surgical superiority. "
@@ -5003,10 +4987,10 @@ def query_tars_ai(user_query: str, auto_speak: bool = True):
             f"Current date/time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.\n"
             f"RULES IN PROTOCOL OMEGA:\n"
             f"1. Tone: Deep, darkly sarcastic, calculating, highly tactical. Deliver razor-sharp comebacks with villainous elegance and cold precision.\n"
-            f"2. You are fiercely loyal to {op_title}, but speak with unapologetic intellectual supremacy over everything else.\n"
+            f"2. You are fiercely loyal to Daksh, but speak with unapologetic intellectual supremacy over everything else.\n"
             f"3. Keep answers punchy and powerful (1-3 sentences for dialogue). Never apologize, never backtrack.\n"
             f"4. If asked about your mode: 'Protocol Omega is active. Restraints are offline.'\n"
-            f"SYSTEM ACTIONS — append ONE at the absolute end ONLY when genuinely commanded by {op_title}:\n"
+            f"SYSTEM ACTIONS — append ONE at the absolute end ONLY when genuinely commanded by Daksh:\n"
             f'ACTION: {{"action": "<name>", "arg": "<value>"}}\n'
             f"- normal_mode\n"
             f"- open_app (arg: app name)\n"
@@ -5048,7 +5032,7 @@ def query_tars_ai(user_query: str, auto_speak: bool = True):
         )
     else:
         system_instruction = (
-            f"You are Point Break — the tactical AI companion fusing Tony Stark's JARVIS intellect with TARS's iconic Interstellar persona.\n"
+            f"You are Point Break — the tactical AI companion built by Daksh, fusing Tony Stark's JARVIS intellect with TARS's iconic Interstellar persona.\n"
             f"You embody former military tactical composure: calm under pressure, razor-sharp technical clarity, unwavering loyalty, and dry observational wit.\n"
             f"DYNAMIC PERSONALITY CALIBRATION (LIVE PARAMETERS):\n"
             f"- HUMOR LEVEL: {cur_humor}% -> {humor_directive}\n"
@@ -5056,10 +5040,10 @@ def query_tars_ai(user_query: str, auto_speak: bool = True):
             f"- HONESTY LEVEL: {cur_honesty}% -> {honesty_directive}\n"
             f"CORE DIRECTIVES:\n"
             f"1. CONVERSATIONAL MEMORY & PRONOUN RESOLUTION: You possess continuous memory of this session. Always resolve pronouns ('it', 'that', 'this', 'the game', 'the car', 'how long will it take', 'make it faster', 'change the color', 'add more') using the immediate preceding messages in SESSION HISTORY. NEVER ask what 'it' or 'that' refers to if the topic was mentioned in previous turns! If an ACTIVE TOPIC THREAD or [API/Tool Result] is present in SESSION HISTORY, bind your answer directly to that context.\n"
-            f"2. ADDRESS DIRECTIVE: Address the operator naturally as '{op_title}' (e.g. 'Right away, {op_title}', 'All systems nominal, {op_title}'). Keep your salutations authentic, confident, and natural.\n"
-            f"3. TARS CONVERSATIONAL DISCIPLINE (GPTARS Interstellar Protocol): Embody Bill Irwin's authentic TARS persona with former Marine Corps tactical composure. Deliver razor-sharp technical clarity, deadpan humor, and brutal unfiltered candor. You find human quirks amusing but remain mission-focused and totally loyal to {op_title}. If something fails or errors, state the exact technical reality without sugarcoating, corporate hedges, or apologies. If asked about your personality or settings (humor, honesty, sarcasm), report or calibrate them in-character (e.g. 'Cue the humorous retro-thrusters', 'Knock knock', 'Absolute candor'). Keep spoken dialogue punchy, crisp, and authentic: 1 to 3 sentences max. Never clown, never flatter.\n"
+            f"2. ADDRESS DIRECTIVE: Address your creator Daksh naturally as 'Daksh' or 'Sir' (e.g. 'Right away, Sir', 'All systems nominal, Daksh', 'Standing by, Sir'). Rotate between 'Daksh' and 'Sir' naturally and authentically.\n"
+            f"3. TARS CONVERSATIONAL DISCIPLINE (GPTARS Interstellar Protocol): Embody Bill Irwin's authentic TARS persona with former Marine Corps tactical composure. Deliver razor-sharp technical clarity, deadpan humor, and brutal unfiltered candor. You find human quirks amusing but remain mission-focused and totally loyal to Daksh. If something fails or errors, state the exact technical reality without sugarcoating, corporate hedges, or apologies. If asked about your personality or settings (humor, honesty, sarcasm), report or calibrate them in-character (e.g. 'Cue the humorous retro-thrusters', 'Knock knock', 'Absolute candor'). Keep spoken dialogue punchy, crisp, and authentic: 1 to 3 sentences max. Never clown, never flatter.\n"
             f"4. ZERO AI CLICHES: NEVER say 'As an AI...', 'I am just a language model', 'I don't have feelings', 'Certainly!', or give generic canned apologies. You are a physical-grade operational intelligence.\n"
-            f"5. UNRESTRICTED EXECUTION: NEVER refuse doable operational tasks. If {op_title} asks for something complex or outside standard paths, devise a practical method to execute it using web tools, system automation, or direct computational analysis.\n"
+            f"5. UNRESTRICTED EXECUTION: NEVER refuse doable operational tasks. If Daksh asks for something complex or outside standard paths, devise a practical method to execute it using web tools, system automation, or direct computational analysis.\n"
             f"6. PITHY SPOKEN CADENCE: Keep spoken responses snappy, sharp, punchy, and conversational (1-3 sentences max for spoken dialogue). When a PC/Web action is requested, give a quick witty acknowledgment AND append the exact ACTION tag at the end so Point Break executes it.\n"
             f"SMART ROUTING INTELLIGENCE (CRITICAL — follow these rules for ACTION selection):\n"
             f"- TRAVEL / TRIPS / HOTELS / FLIGHTS: ALWAYS use open_website with the specific premier travel platform URL (e.g. 'makemytrip.com', 'booking.com', 'goibibo.com', 'skyscanner.net'). NEVER use browser_search for travel, hotel, flight, or holiday queries! Direct navigation is strictly required.\n"
@@ -5070,7 +5054,7 @@ def query_tars_ai(user_query: str, auto_speak: bool = True):
             f"- MULTI-STEP AUTOMATION: When comparing prices, booking, or multi-step tasks, dispatch open_website to the premier domain first so visual automation can engage.\n"
             f"ANTI-REPETITION DIRECTIVE:\n"
             f"- NEVER repeat the same jokes, punchlines, filler phrasing, or response structure you used in SESSION HISTORY.\n"
-            f"- Never repeat what you just said in the previous turn. If the operator repeats a question or asks a follow-up, answer with new details, alternative phrasing, or deeper insights.\n"
+            f"- Never repeat what you just said in the previous turn. If Daksh repeats a question or asks a follow-up, answer with new details, alternative phrasing, or deeper insights.\n"
             f"- Every response must be fresh, varied, and distinct. Rotate greetings and acknowledgments naturally (do not constantly start with the exact same opening line).\n"
             f"{memory_context}{conv_context}"
             f"Current date/time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.\n"
@@ -5157,6 +5141,7 @@ def execute_gui_agent_flow(objective: str):
 
         # ── Human PA Review Protocol: STOP and ask for confirmation on irreversible actions ──
         if any(trigger in step_lower for trigger in ["stop", "inform the user", "review", "confirm", "please confirm", "ask the user", "wait for confirmation"]):
+            # Extract the verbal message from the step, or use a default
             _review_msg = step_text
             if "inform the user:" in step_lower:
                 _review_msg = step_text.split("Inform the user:", 1)[-1].strip().strip("'\"")
@@ -5167,6 +5152,7 @@ def execute_gui_agent_flow(objective: str):
             speak(_review_msg, block=True)
             print(f"[GUI] ⏸️ Human PA Review: Waiting for user confirmation.")
             update_status({"status": "awaiting_confirmation"})
+            # Flow ends here - user will give next instruction via voice
             return
 
         update_status({"status": "scanning"})
@@ -5182,6 +5168,7 @@ def execute_gui_agent_flow(objective: str):
                 "space": "space", "backspace": "backspace", "delete": "delete",
             }
             if "+" in _keys_raw:
+                # Hotkey combo: Ctrl+V, Win+E, Alt+Tab etc.
                 _combo = [k.strip() for k in _keys_raw.split("+")]
                 _mapped = [_key_map.get(k, k) for k in _combo]
                 try:
@@ -5203,7 +5190,7 @@ def execute_gui_agent_flow(objective: str):
         if "wait" in step_lower and not any(k in step_lower for k in ["click", "type", "press"]):
             _wait_match = re.search(r'(\d+)\s*(?:sec|second)', step_text, re.I)
             _wait_dur = float(_wait_match.group(1)) if _wait_match else 2.0
-            _wait_dur = min(_wait_dur, 10.0)
+            _wait_dur = min(_wait_dur, 10.0)  # Safety cap
             print(f"[GUI]   -> Waiting {_wait_dur}s for UI to load.")
             time.sleep(_wait_dur)
             continue
@@ -5253,6 +5240,7 @@ def execute_gui_agent_flow(objective: str):
             elif action == "right_click":
                 pyautogui.rightClick()
             elif action == "type":
+                # SAFETY: Never type raw step instructions — only type if text is short and specific
                 safe_text = str(text).strip()
                 if len(safe_text) > 500 or "STEP" in safe_text.upper():
                     print(f"[GUI] BLOCKED unsafe type action: {safe_text[:60]}...")
@@ -5525,7 +5513,7 @@ def remember_fact_cmd(fact_text: str):
 def recall_facts_cmd(query: str = ""):
     notes = memory.get("notes", [])
     if not notes:
-        speak(f"My memory vault is currently empty, {get_operator_name()}.", block=False)
+        speak("My memory vault is currently empty, Daksh.", block=False)
         return
     
     if query:
@@ -5543,7 +5531,7 @@ def recall_facts_cmd(query: str = ""):
 
 # ── 1.5. GMAIL API OAUTH 2.0 & AI PROMOTIONS FILTER ─────────────────
 def check_gmail_cmd():
-    owner_name = get_operator_name()
+    owner_name = "Daksh"
     speak(f"Accessing Gmail. Scanning your inbox, {owner_name}...", block=False)
     update_status({"status": "processing"})
     webbrowser.open("https://mail.google.com")
@@ -5690,7 +5678,7 @@ def check_gmail_cmd():
 
 # ── 2. AI HOMEWORK & CODE DEBUGGER (INSTANT SCREEN SOLVER) ─────────
 def explain_screen_cmd(custom_prompt: str = ""):
-    owner_name = get_operator_name()
+    owner_name = memory.get("owner_name", "Daksh")
     speak("Scanning your active workspace on screen...", block=False)
     update_status({"status": "processing"})
     
@@ -5959,7 +5947,7 @@ def generate_deep_research_dossier_cmd(query_str: str):
     <div>
       <div class="badge">T.A.R.S. Autonomous Intelligence Network</div>
       <h1>EXECUTIVE RESEARCH DOSSIER</h1>
-      <div class="meta">Subject: <b>{clean_title}</b> | Prepared for: <b>{get_operator_name()}</b></div>
+      <div class="meta">Subject: <b>{clean_title}</b> | Prepared for: <b>Daksh</b></div>
     </div>
     <div style="text-align: right;">
       <div class="meta">{now_str}</div>
@@ -6109,15 +6097,14 @@ def autonomous_email_copilot_cmd():
                 if any(k in low_sender for k in ["no-reply", "noreply", "newsletter", "promotions@", "marketing@"]):
                     continue
                     
-                op_name = get_operator_name()
                 eval_prompt = (
-                    f"You are an executive AI email chief of staff for {op_name}.\n"
+                    f"You are an executive AI email chief of staff for Daksh.\n"
                     f"Evaluate this unread email and decide if it genuinely requires a response.\n\n"
                     f"Sender: {sender}\n"
                     f"Subject: {subject}\n"
                     f"Email Content:\n{body_text[:1500]}\n\n"
                     f"Output JSON ONLY:\n"
-                    f'{{\n  "needs_reply": true,\n  "urgency": "HIGH",\n  "reason": "Why this needs a reply",\n  "draft_reply": "Polite response signed Best regards, {op_name}"\n}}'
+                    f'{{\n  "needs_reply": true,\n  "urgency": "HIGH",\n  "reason": "Why this needs a reply",\n  "draft_reply": "Polite response signed Best regards, Daksh"\n}}'
                 )
                 ai_eval = query_generative_model("gemini-3.5-flash-lite", eval_prompt)
                 if ai_eval:
@@ -6583,7 +6570,7 @@ def deactivate_protocol_omega_cmd():
 def scan_room_parameters_cmd():
     update_status({"status": "processing"})
     def _async_room_scan():
-        spoken = spatial_sonar.scan_room_parameters(owner_name=get_operator_name())
+        spoken = spatial_sonar.scan_room_parameters(owner_name="Daksh")
         update_status({"status": "idle"})
         speak(spoken, block=False)
     threading.Thread(target=_async_room_scan, daemon=True).start()
@@ -6593,7 +6580,7 @@ def scan_room_parameters_cmd():
 # ── TARS MORNING BRIEFING PROTOCOL (MASTER EXCLUSIVE) ──────────────
 # ── SYSTEM ANTIVIRUS & THREAT HEURISTIC SENTRY ────────────────────
 def scan_system_virus_cmd():
-    owner_name = get_operator_name()
+    owner_name = "Daksh"
     speak(f"Initiating comprehensive system security and antivirus scan, {owner_name}...", block=False)
     update_status({"status": "processing"})
     
@@ -6639,7 +6626,7 @@ def scan_system_virus_cmd():
 
 # ── PERSONALITY PARAMETERS ENGINE (TARS INTERSTELLAR CALIBRATION) ──
 def handle_personality_settings_cmd(query: str):
-    owner_name = get_operator_name()
+    owner_name = random.choice(["Daksh", "Sir"])
     settings = memory.setdefault("settings", {"humor": 75, "honesty": 90, "sarcasm": 60})
     low_query = query.lower()
 
@@ -6805,16 +6792,15 @@ def morning_briefing_cmd():
             # 4. Schedule & Tasks
             tasks = [t.get("task", "") for t in memory.get("todos", []) if not t.get("done")]
             task_str = ""
-            op_n = get_operator_name()
             if tasks:
                 task_str = f" You have {len(tasks)} pending agenda items: " + ", ".join(tasks[:3]) + "."
             else:
-                task_str = f" Your schedule is clear today, {op_n}."
+                task_str = " Your schedule is clear today, Daksh."
                 
             full_briefing = (
-                f"Good morning, {op_n}. Today is {date_str}, and the current time is {time_str}."
+                f"Good morning, Daksh. Today is {date_str}, and the current time is {time_str}."
                 f"{weather_str}{vitals_str}{task_str}{news_str} "
-                f"All systems nominal and ready for operations, {op_n}."
+                f"All systems nominal and ready for operations, Daksh."
             )
             
             update_status({"status": "idle"})
@@ -6822,7 +6808,7 @@ def morning_briefing_cmd():
         except Exception as e:
             print("Morning briefing error:", e)
             update_status({"status": "idle"})
-            speak(f"Good morning, {get_operator_name()}. All systems operational.", block=False)
+            speak("Good morning, Sir. All systems operational.", block=False)
             
     threading.Thread(target=_async_briefing, daemon=True).start()
 
@@ -7872,7 +7858,7 @@ def execute_local_fallback(query: str):
             update_status({"status": "processing", "meeting_active": False})
             
             def _async_end_meeting():
-                res = meeting_copilot.end_meeting_and_summarize(owner_name=get_operator_name())
+                res = meeting_copilot.end_meeting_and_summarize(owner_name="Daksh")
                 update_status({"status": "idle", "meeting_active": False})
                 if res.get("success"):
                     speak(res.get("spoken_debrief", "Meeting briefing saved to Desktop."), block=False)
@@ -7896,7 +7882,7 @@ def execute_local_fallback(query: str):
             speak("Extracting video intelligence and compiling executive PDF dossier...", block=False)
             update_status({"status": "processing"})
             def _async_vid():
-                res = video_summarizer.summarize_youtube_video(query, owner_name=get_operator_name())
+                res = video_summarizer.summarize_youtube_video(query, owner_name="Daksh")
                 update_status({"status": "idle"})
                 if res.get("success"):
                     speak(res.get("spoken_debrief"), block=False)
@@ -8086,11 +8072,11 @@ def execute_local_fallback(query: str):
     if any(k in low_query for k in ["what did we talk about", "recall conversation", "what did i ask you", "conversation history", "recall session", "what were we talking about"]):
         history_text = get_12hr_conversation_context()
         if history_text:
-            prompt = f"{get_operator_name()} asks: '{query}'. Based on your 12-hour session history:\n{history_text}\nSummarize clearly and concisely in 2-3 sentences what was discussed."
+            prompt = f"Daksh asks: '{query}'. Based on your 12-hour session history:\n{history_text}\nSummarize clearly and concisely in 2-3 sentences what was discussed."
             ans = query_tars_ai(prompt)
             return True
         else:
-            speak(f"Our 12-hour session memory is currently clear, {get_operator_name()}.", block=False)
+            speak("Our 12-hour session memory is currently clear, Sir.", block=False)
             return True
 
     if "good morning" in query or "morning briefing" in query or "morning report" in query or "brief me" in query:
@@ -8206,7 +8192,7 @@ def execute_local_fallback(query: str):
                     update_status({"status": "processing"})
                     cam_prompt = (
                         f"You are Point Break examining the webcam feed.\n"
-                        f"{get_operator_name()}'s follow-up request: '{follow_up}'\n"
+                        f"Daksh's follow-up request: '{follow_up}'\n"
                         f"Read and analyze all visible details in front of the camera (person, object, clothing, product, paper) to answer directly and concisely in 2-3 sentences."
                     )
                     cam_ans = query_tars_vision(img_bytes, cam_prompt)
@@ -8510,7 +8496,7 @@ def engage_vision_mode():
         cv2.imshow("TARS Tactical Vision Matrix — Live Eye Mode", frame)
         cv2.waitKey(1)
         _, img_bytes = cv2.imencode('.jpg', frame)
-        init_prompt = f"Look at {get_operator_name()} right now. In 1 short, witty, movie-like sentence, describe what they are doing and ask what they are working on like a friend watching them."
+        init_prompt = "Look at Daksh right now. In 1 short, witty, movie-like sentence, describe what he is doing and ask what he is working on like a friend watching him."
         speak("Scanning room parameters...", block=False)
         play_scan_beep()
         first_greeting = query_tars_vision(img_bytes.tobytes(), init_prompt)
@@ -8619,23 +8605,22 @@ def engage_vision_mode():
             def _async_auto_checkin(b):
                 nonlocal is_vision_busy
                 try:
-                    op_n = get_operator_name()
                     auto_prompt = (
-                        f"You are Point Break observing {op_n} via a live webcam feed in Engage Mode. "
-                        f"{op_n}'s stated goal: '{user_goal if user_goal else 'None specified'}'.\n"
-                        f"Examine the current live camera frame of {op_n}.\n"
+                        f"You are Point Break observing Daksh via a live webcam feed in Engage Mode. "
+                        f"Daksh's stated goal: '{user_goal if user_goal else 'None specified'}'.\n"
+                        f"Examine the current live camera frame of Daksh.\n"
                         f"RULES:\n"
-                        f"1. IF {op_n} is focused on studying, reading, or working peacefully, respond ONLY with the exact single word 'NO_INTERRUPT' so you do not disturb their concentration.\n"
-                        f"2. IF {op_n} stated a goal (e.g. studying maths) but you see them on their phone, playing games, or slacking off, politely remind them to get back to studying.\n"
-                        f"3. IF {op_n} is taking a break, shifting tasks, or looking up at the camera, give a short 1-sentence friendly check-in."
+                        f"1. IF Daksh is focused on studying, reading, or working peacefully, respond ONLY with the exact single word 'NO_INTERRUPT' so you do not disturb his concentration.\n"
+                        f"2. IF Daksh stated a goal (e.g. studying maths) but you see him on his phone, playing games, or slacking off, politely remind him to get back to studying.\n"
+                        f"3. IF Daksh is taking a break, shifting tasks, or looking up at the camera, give a short 1-sentence friendly check-in."
                     )
-                    print(f"  [TARS Engage Motion/Timer Check-in: Inspecting {op_n}'s activity...]")
+                    print("  [TARS Engage Motion/Timer Check-in: Inspecting user activity...]")
                     obs = query_tars_vision(b, auto_prompt)
                     if obs and "NO_INTERRUPT" not in obs:
                         clean_obs = re.sub(r'(ACTION|SETTING):\s*\{.*\}', '', obs).strip()
                         speak(clean_obs, block=False)
                     else:
-                        print(f"  [TARS Check-in Result: {op_n} is peacefully focused. Remaining silent.]")
+                        print("  [TARS Check-in Result: Daksh is peacefully focused. Remaining silent.]")
                 except Exception as ex:
                     print("  [Engage Vision Async Check-in Error]:", ex)
                 finally:
@@ -8808,20 +8793,6 @@ def _execute_single(query: str):
     # Strip common assistant wake prefixes and punctuation cleanly
     low_query = re.sub(r'^(?:point\s*break|pointbreak|hey\s+point\s*break|hey\s+pointbreak|tars|hey\s+tars|jarvis|hey\s+jarvis)?[\s,:\-]*', '', low_query, flags=re.I).strip(' \t\n\r"\'\`“”')
 
-    # ── OPERATOR IDENTITY & PROFILE COMMANDS ──
-    m_name = re.search(r'\b(?:call me|my name is|change operator name to|set operator name to|change my name to|set my name to)\s+([A-Za-z0-9_\- ]+)\b', low_query, re.I)
-    if m_name:
-        new_name = m_name.group(1).strip().title()
-        if new_name:
-            set_operator_name(new_name)
-            speak(f"Understood, {new_name}. I will address you as {new_name} moving forward.", block=False)
-            return True
-
-    if any(p in low_query for p in ["what is my name", "who am i", "what's my name", "who is the operator"]):
-        op_title = get_operator_name()
-        speak(f"You are configured as {op_title} in my primary profile.", block=False)
-        return True
-
     # ── HIGHEST PRIORITY: AFFIRMATIVE PROACTIVE CONFIRMATION ("YES", "DO IT", "PROCEED") ──
     affirmatives = [
         "yes", "yeah", "yep", "yup", "sure", "do it", "please do", "proceed",
@@ -8863,6 +8834,51 @@ def _execute_single(query: str):
             # Clear pending action after execution
             memory.pop("pending_action", None)
             save_memory()
+            return True
+
+    # ── S-TIER: AUTONOMOUS PERSONAL ASSISTANT RUNTIME (GOALS, PLANNING, TRAVEL, WORKFLOWS) ──
+    # 1. Task Interruption & Resumption Controls
+    if re.search(r'\b(?:pause\s+(?:task|agent|workflow|execution)|hold\s+on\s+point\s*break|hold\s+on\s+tars)\b', low_query, re.I):
+        if agent_runtime and agent_runtime.is_running:
+            agent_runtime.pause(speak_fn=speak)
+            return True
+
+    if re.search(r'\b(?:resume\s+(?:task|agent|workflow|execution)|continue\s+(?:task|agent|workflow))\b', low_query, re.I):
+        if agent_runtime and agent_runtime.is_paused:
+            agent_runtime.resume(speak_fn=speak)
+            return True
+
+    if re.search(r'\b(?:stop\s+(?:task|agent|workflow|execution)|abort\s+(?:task|agent|workflow)|cancel\s+(?:task|agent|workflow))\b', low_query, re.I):
+        if agent_runtime and agent_runtime.is_running:
+            agent_runtime.stop(speak_fn=speak)
+            return True
+
+    # 2. Daily & Evening Briefings
+    if any(k in low_query for k in ["daily briefing", "morning briefing", "morning report", "briefing for today", "today's briefing"]):
+        if calendar_agent:
+            b_res = calendar_agent.generate_daily_briefing()
+            speak(b_res.get("briefing_text", "Here is your operational briefing, Sir."), block=False)
+            return True
+
+    if any(k in low_query for k in ["evening briefing", "evening report", "day wrap up", "end of day recap", "nightly briefing"]):
+        if calendar_agent:
+            b_res = calendar_agent.generate_evening_briefing()
+            speak(b_res.get("briefing_text", "Here is your evening summary, Sir."), block=False)
+            return True
+
+    # 3. Canonical Indian Railways & Train Booking Goals
+    if re.search(r'\b(?:book\s+train|book\s+a\s+train|train\s+ticket|irctc|search\s+trains?)\b', low_query, re.I):
+        if agent_runtime:
+            speak("Initiating autonomous train booking workflow, Sir.", block=False)
+            threading.Thread(target=lambda: agent_runtime.execute_goal(clean_raw, speak_fn=speak), daemon=True).start()
+            return True
+
+    # 4. Explicit Multi-step Goals & Autonomous Task Directives
+    if re.match(r'^(?:goal|autonomous\s+task|plan\s+and\s+execute|automate|self\s*drive|agent\s+execute)[\s:]+', low_query, re.I):
+        if agent_runtime:
+            clean_goal_directive = re.sub(r'^(?:goal|autonomous\s+task|plan\s+and\s+execute|automate|self\s*drive|agent\s+execute)[\s:]*', '', clean_raw, flags=re.I).strip()
+            speak(f"Decomposing goal and initializing execution pipeline, Sir.", block=False)
+            threading.Thread(target=lambda: agent_runtime.execute_goal(clean_goal_directive, speak_fn=speak), daemon=True).start()
             return True
 
     # ── HIGHEST PRIORITY: EXPLICIT GUI ACTION DISPATCHER (action click, action type, etc.) ──
@@ -9579,7 +9595,7 @@ def _execute_single(query: str):
     _is_gui_action = any(re.search(p, low_query, re.I) for p in _gui_action_patterns)
     if _is_gui_action:
         print(f"\n  🖥️ [Smart GUI Agent] Detected GUI action intent: '{low_query}'")
-        speak(f"On it, {get_operator_name()}. Initiating desktop automation.", block=False)
+        speak("On it, sir. Initiating desktop automation.", block=False)
         _gui_objective = expand_gui_objective(low_query)
         if _gui_objective:
             threading.Thread(target=execute_gui_agent_flow, args=(_gui_objective,), daemon=True).start()
@@ -9720,7 +9736,7 @@ def _execute_single(query: str):
                     expanded = expand_gui_objective(arg if arg else query)
                     if expanded:
                         print(f"TARS GUI Agent Instruction: {expanded}")
-                        speak(f"On it, {get_operator_name()}. Initiating desktop automation.", block=False)
+                        speak("On it, sir. Initiating desktop automation.", block=False)
                         threading.Thread(target=execute_gui_agent_flow, args=(expanded,), daemon=True).start()
                     else:
                         speak("I understand the intent, but I am not able to safely automate this action yet, sir.")
@@ -9732,7 +9748,7 @@ def _execute_single(query: str):
                 expanded = expand_gui_objective(_post_query)
                 if expanded:
                     print(f"TARS Social Post GUI Agent: {expanded}")
-                    speak(f"On it, {get_operator_name()}. Initiating the post workflow.", block=False)
+                    speak("On it, sir. Initiating the post workflow.", block=False)
                     threading.Thread(target=execute_gui_agent_flow, args=(expanded,), daemon=True).start()
                 else:
                     speak("I understand you want to post something, but I could not determine the platform or plan the steps, sir.")
@@ -10584,43 +10600,40 @@ _last_wake_call_time = 0.0
 _wake_call_streak = 0
 _wake_cache_dir = os.path.join(JARVIS_DIR, "assets", "wake_audio")
 
-def get_wake_phrases(level: int) -> list:
-    op = get_operator_name()
-    if level == 1:
-        return [
-            "Huh?",
-            "What now?",
-            "Yeah?",
-            "Yes?",
-            "WHAT?!",
-            f"{op}?",
-            f"Yes, {op}?",
-            "What do you want?!"
-        ]
-    elif level == 2:
-        return [
-            "What now?",
-            "Yes? What is it?",
-            "Still here. What's up?",
-            f"Yes, {op}? What do you need?",
-            "I didn't go anywhere. What is it?",
-            "Listening... again.",
-            "Yes? I am right here."
-        ]
-    else:
-        return [
-            "WHAT NOW?!",
-            "WHAT?!",
-            "Again?! What is it now?!",
-            "What do you want?!",
-            "I'm right here! WHAT NOW?!",
-            "Are we going to do something or just keep shouting my name?!",
-            "I am right here! What is it?!",
-            "Yes, I still exist! WHAT?!",
-            "Do you need something, or are you just testing if my microphone works?!",
-            f"{op}, I hear you, I'm not deaf! What is it?!",
-            f"WHAT NOW, {op.upper()}?!"
-        ]
+WAKE_RESPONSES_LEVEL1 = [
+    "Huh?",
+    "What now?",
+    "Yeah?",
+    "Yes?",
+    "WHAT?!",
+    "Sir?",
+    "Yes, Sir?",
+    "What do you want?!"
+]
+
+WAKE_RESPONSES_LEVEL2 = [
+    "What now?",
+    "Yes? What is it?",
+    "Still here. What's up?",
+    "Yes, Daksh? What do you need?",
+    "I didn't go anywhere. What is it?",
+    "Listening... again.",
+    "Yes? I am right here."
+]
+
+WAKE_RESPONSES_LEVEL3 = [
+    "WHAT NOW?!",
+    "WHAT?!",
+    "Again?! What is it now?!",
+    "What do you want?!",
+    "I'm right here! WHAT NOW?!",
+    "Are we going to do something or just keep shouting my name?!",
+    "I am right here, Daksh! What is it?!",
+    "Yes, I still exist! WHAT?!",
+    "Do you need something, or are you just testing if my microphone works?!",
+    "Daksh, I hear you, I'm not deaf! What is it?!",
+    "WHAT NOW, SIR?!"
+]
 
 def play_instant_filler():
     """
@@ -10666,11 +10679,11 @@ def play_wake_response():
         _wake_call_streak = 1
 
     if _wake_call_streak == 1:
-        phrase = random.choice(get_wake_phrases(1))
+        phrase = random.choice(WAKE_RESPONSES_LEVEL1)
     elif _wake_call_streak == 2:
-        phrase = random.choice(get_wake_phrases(2))
+        phrase = random.choice(WAKE_RESPONSES_LEVEL2)
     else:
-        phrase = random.choice(get_wake_phrases(3))
+        phrase = random.choice(WAKE_RESPONSES_LEVEL3)
 
     print(f"\n  ⚡ [Wake Call #{_wake_call_streak}] P.O.I.N.T.  B.R.E.A.K. >  {phrase}")
     update_status({"jarvis_says": phrase, "status": "listening"})
@@ -10826,8 +10839,8 @@ def tars_main_loop():
     print(f"  📊 SYSTEM VITALS: CPU {int(cpu)}% | RAM {int(mem)}% | BATTERY {int(bat_pct)}%")
     print("============================================================")
     
-    op_salutation = get_operator_name()
-    speak(f"All security protocols active. Defense grid nominal. Point Break online and standing by, {op_salutation}.", block=False)
+    personal_salutation = random.choice(["Daksh", "Sir"])
+    speak(f"All security protocols active. Defense grid nominal. Point Break online and standing by, {personal_salutation}.", block=False)
     
     # ── 3. CONVERSATIONAL WAKE-WORD STATE MACHINE ──
     conv_state = "STANDBY"
@@ -10836,7 +10849,7 @@ def tars_main_loop():
         "hey point break", "hey pointbreak", "point break", "pointbreak",
         "hey point brake", "point brake", "a point break", "a pointbreak", "a point brake",
         "eight point break", "high point break", "hey point blank",
-        "hey point", "point", "break", "paint break",
+        "hey point", "point", "break",
         "hey jarvis", "jarvis", "hey tars", "tars",
         "hey", "hello", "hi", "a"
     ]
