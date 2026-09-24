@@ -157,6 +157,84 @@ def test_commerce_and_meetings():
     assert action_res["success"] is True and action_res["action_items_count"] >= 2
     print(f"✔ extract_action_items -> extracted {action_res['action_items_count']} action items")
 
+def test_advanced_travel_and_services():
+    print("\n--- TEST 6: SPRINT 3 ADVANCED TRAVEL & LOCAL SERVICES ---")
+    from tools.registry import tool_registry
+
+    # 1. Flight Search & Booking
+    fl_res = tool_registry.execute("search_flights", from_city="Delhi", to_city="Mumbai", non_stop_only=True)
+    assert fl_res["success"] is True and len(fl_res["flights"]) > 0
+    print(f"✔ search_flights -> found {len(fl_res['flights'])} flights {fl_res['from_city']} -> {fl_res['to_city']}")
+
+    sel_fl = tool_registry.execute("select_flight", flight_number="6E-2041", preference="fastest")
+    assert sel_fl["success"] is True
+    print(f"✔ select_flight -> selected {sel_fl['selected_flight']['flight_number']}")
+
+    book_fl = tool_registry.execute("book_flight_ticket", flight_info=sel_fl["selected_flight"], fare=4650.0)
+    assert book_fl["success"] is True and book_fl["pnr"].startswith("FL")
+    print(f"✔ book_flight_ticket -> Confirmed PNR: {book_fl['pnr']}")
+
+    track_fl = tool_registry.execute("track_flight", flight_number="6E-2041")
+    assert track_fl["success"] is True and track_fl["status"] == "ON TIME"
+    print(f"✔ track_flight -> {track_fl['flight_number']} status: {track_fl['status']}")
+
+    # 2. Hotel Search & Reservation
+    htl_res = tool_registry.execute("search_hotels", city="Delhi", min_stars=4)
+    assert htl_res["success"] is True and len(htl_res["hotels"]) > 0
+    print(f"✔ search_hotels -> found {htl_res['total_found']} 4+ star hotels in {htl_res['city']}")
+
+    sel_htl = tool_registry.execute("select_hotel", hotel_name="The Taj Mahal Hotel", room_type="Deluxe Room")
+    assert sel_htl["success"] is True
+    print(f"✔ select_hotel -> {sel_htl['selected_hotel']['hotel_name']}")
+
+    resv_htl = tool_registry.execute("reserve_hotel", hotel_info=sel_htl["selected_hotel"], nights=1, total_fare=14500.0)
+    assert resv_htl["success"] is True and resv_htl["confirmation_code"].startswith("HTL")
+    print(f"✔ reserve_hotel -> Confirmed code: {resv_htl['confirmation_code']}")
+
+    chk_htl = tool_registry.execute("check_hotel_reservation", confirmation_code=resv_htl["confirmation_code"])
+    assert chk_htl["success"] is True and "CONFIRMED" in chk_htl["status"]
+    print(f"✔ check_hotel_reservation -> Status: {chk_htl['status']}")
+
+    # 3. Local Services Scheduling
+    srv_res = tool_registry.execute("search_local_services", service_type="ac repair", locality="Civil Lines, Kanpur")
+    assert srv_res["success"] is True and len(srv_res["top_providers"]) > 0
+    print(f"✔ search_local_services -> found {len(srv_res['top_providers'])} {srv_res['service_type']} providers")
+
+    sched_res = tool_registry.execute(
+        "schedule_service_appointment",
+        service_type="ac repair",
+        provider_name="Urban Company Certified AC Pro",
+        time_slot="10:00 AM - 12:00 PM"
+    )
+    assert sched_res["success"] is True and sched_res["appointment_id"].startswith("SRV")
+    print(f"✔ schedule_service_appointment -> Appointment ID: {sched_res['appointment_id']}")
+
+    # 4. Customer Support Ticket & Grievance Notice
+    tkt_res = tool_registry.execute(
+        "create_support_ticket",
+        platform_or_vendor="Airtel",
+        issue_category="Fiber Connectivity Outage",
+        description="Loss of signal on line 0512-XXXXXX since morning"
+    )
+    assert tkt_res["success"] is True and tkt_res["ticket_id"].startswith("TKT")
+    print(f"✔ create_support_ticket -> Ticket ID: {tkt_res['ticket_id']}")
+
+    cmpl_res = tool_registry.execute(
+        "draft_complaint",
+        target_company="Airtel Broadband",
+        order_or_account_id="ACC-998822",
+        incident_summary="Repeated fiber outages without credit note adjustment",
+        desired_resolution="Bill waiver and fiber optic link replacement"
+    )
+    assert cmpl_res["success"] is True and "FORMAL GRIEVANCE" in cmpl_res["complaint_body"]
+    print("✔ draft_complaint -> Legal grievance document verified")
+
+    # 5. Autonomous Flight Execution Goal
+    flight_goal = "Book a flight from Delhi to Mumbai tomorrow"
+    runtime_res = agent_runtime.execute_goal(flight_goal, speak_fn=mock_speaker)
+    assert runtime_res["success"] is True
+    print(f"✔ Autonomous Flight Booking Goal succeeded! Result: {runtime_res['status']}")
+
 if __name__ == "__main__":
     print("==================================================")
     print(" POINT BREAK AUTONOMOUS RUNTIME TEST SUITE")
@@ -166,6 +244,7 @@ if __name__ == "__main__":
     test_canonical_train_booking()
     test_office_and_data_forge()
     test_commerce_and_meetings()
+    test_advanced_travel_and_services()
     print("\n==================================================")
     print(" ALL TESTS PASSED SUCCESSFULLY! ")
     print("==================================================")

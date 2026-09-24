@@ -61,6 +61,18 @@ Canonical Actions you can use:
 - "select_train": params = {{"train_name": "...", "departure_time": "...", "class": "..."}}
 - "fill_passenger": params = {{"name": "...", "age": 24, "gender": "M", "berth": "..."}}
 - "book_train_ticket": params = {{"train": "...", "fare": 2500, "date": "..."}}  (R3 Consequential)
+- "search_flights": params = {{"from_city": "...", "to_city": "...", "date_str": "..."}}
+- "select_flight": params = {{"flight_number": "...", "preference": "fastest"}}
+- "book_flight_ticket": params = {{"fare": 4650}} (R3 Consequential)
+- "track_flight": params = {{"flight_number": "..."}}
+- "search_hotels": params = {{"city": "...", "checkin_date": "...", "checkout_date": "..."}}
+- "select_hotel": params = {{"hotel_name": "...", "room_type": "..."}}
+- "reserve_hotel": params = {{"nights": 1, "total_fare": 7800}} (R3 Consequential)
+- "check_hotel_reservation": params = {{"confirmation_code": "..."}}
+- "search_local_services": params = {{"service_type": "...", "locality": "..."}}
+- "schedule_service_appointment": params = {{"service_type": "...", "time_slot": "..."}} (R2 External Comms)
+- "create_support_ticket": params = {{"platform_or_vendor": "...", "issue_category": "...", "description": "..."}}
+- "draft_complaint": params = {{"target_company": "...", "order_or_account_id": "...", "incident_summary": "..."}}
 - "read_inbox": params = {{"filter": "..."}}
 - "summarize_emails": params = {{"topic": "..."}}
 - "draft_email": params = {{"to": "...", "subject": "...", "body": "..."}}
@@ -293,6 +305,96 @@ Rules:
                     parameters={"topic": clean_goal},
                     description="Synthesize multi-source research dossier with citations",
                     risk_level="R0"
+                )
+            ]
+
+        # 10. Flight Search & Booking
+        if "flight" in low or "fly" in low or "airline" in low:
+            return [
+                TaskStep(
+                    index=0,
+                    action="search_flights",
+                    parameters={"from_city": "Delhi", "to_city": "Mumbai"},
+                    description="Search direct flights and real-time fares across airlines",
+                    risk_level="R0"
+                ),
+                TaskStep(
+                    index=1,
+                    action="select_flight",
+                    parameters={"preference": "fastest"},
+                    description="Select premier non-stop flight option",
+                    risk_level="R1"
+                ),
+                TaskStep(
+                    index=2,
+                    action="book_flight_ticket",
+                    parameters={"fare": 4650.0},
+                    description="Request user confirmation and complete flight ticket booking",
+                    risk_level="R3"
+                )
+            ]
+
+        # 11. Hotel Search & Reservation
+        if "hotel" in low or "resort" in low or "stay" in low:
+            return [
+                TaskStep(
+                    index=0,
+                    action="search_hotels",
+                    parameters={"city": clean_goal},
+                    description="Search rated hotel accommodations and room rates",
+                    risk_level="R0"
+                ),
+                TaskStep(
+                    index=1,
+                    action="select_hotel",
+                    parameters={"room_type": "Deluxe King Room"},
+                    description="Select hotel property and room configuration",
+                    risk_level="R1"
+                ),
+                TaskStep(
+                    index=2,
+                    action="reserve_hotel",
+                    parameters={"nights": 1, "total_fare": 7800.0},
+                    description="Authorize hotel reservation and generate voucher",
+                    risk_level="R3"
+                )
+            ]
+
+        # 12. Local Services & Technicians
+        if any(w in low for w in ["repair", "plumber", "electrician", "technician", "ac service", "car service"]):
+            return [
+                TaskStep(
+                    index=0,
+                    action="search_local_services",
+                    parameters={"service_type": clean_goal},
+                    description="Find top-rated vetted local technicians and service providers",
+                    risk_level="R0"
+                ),
+                TaskStep(
+                    index=1,
+                    action="schedule_service_appointment",
+                    parameters={"service_type": clean_goal, "time_slot": "11:00 AM - 01:00 PM"},
+                    description="Schedule service appointment and technician visit",
+                    risk_level="R2"
+                )
+            ]
+
+        # 13. Customer Support & Complaints
+        if "complaint" in low or "grievance" in low or "support ticket" in low:
+            return [
+                TaskStep(
+                    index=0,
+                    action="create_support_ticket",
+                    parameters={"platform_or_vendor": clean_goal, "issue_category": "Service Escalation", "description": clean_goal},
+                    description="File formal customer support escalation ticket",
+                    risk_level="R1"
+                ),
+                TaskStep(
+                    index=1,
+                    action="draft_complaint",
+                    parameters={"target_company": clean_goal, "order_or_account_id": "REF-AUTO", "incident_summary": clean_goal},
+                    description="Draft formal consumer protection complaint letter",
+                    risk_level="R1"
                 )
             ]
 

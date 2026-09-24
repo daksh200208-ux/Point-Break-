@@ -68,6 +68,14 @@ class ContextStore:
         except Exception as e:
             print(f"[ContextStore] Error saving user profile: {e}")
 
+    def get(self, key: str, default: Any = None) -> Any:
+        """Retrieves a preference attribute or dictionary representation."""
+        if key in ("user_profile", "profile"):
+            return asdict(self.preferences)
+        if hasattr(self.preferences, key):
+            return getattr(self.preferences, key)
+        return default
+
     def update_preference(self, key: str, value: Any):
         if hasattr(self.preferences, key):
             setattr(self.preferences, key, value)

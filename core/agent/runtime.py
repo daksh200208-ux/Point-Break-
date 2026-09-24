@@ -21,9 +21,12 @@ from tools.registry import tool_registry
 # Auto-register all domain tools into ToolRegistry
 try:
     import tools.travel.train_engine
+    import tools.travel.flight_engine
+    import tools.travel.hotel_engine
     import tools.communications.email_agent
     import tools.system.calendar_agent
     import tools.system.meeting_engine
+    import tools.system.local_services
     import tools.computer.visual_grounding
     import tools.computer.uia_driver
     import tools.office.spreadsheet_engine
@@ -248,7 +251,7 @@ class AgentRuntime:
                 with self._lock: self._is_running = False
                 if speak_fn:
                     speak_fn(f"Step {step.index + 1} encountered a roadblock: {step_error}. Pausing for operator review.")
-                return {"success": False, "failed_step": step.index + 1, "error": step_error, "task_id": task.task_id}
+                return {"success": False, "status": "FAILED", "failed_step": step.index + 1, "error": step_error, "task_id": task.task_id}
 
             task.current_step_index += 1
             task_store.save_task(task)
@@ -268,6 +271,7 @@ class AgentRuntime:
 
         return {
             "success": True,
+            "status": "COMPLETED",
             "task_id": task.task_id,
             "goal": goal,
             "steps_executed": total_steps,
