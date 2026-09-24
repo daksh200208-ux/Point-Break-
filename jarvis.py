@@ -888,6 +888,10 @@ def speech_worker():
         if not audio_file_path or not os.path.exists(audio_file_path) or os.path.getsize(audio_file_path) == 0:
             return False
         try:
+            wait_t = time.time()
+            while pygame.mixer.get_init() and pygame.mixer.music.get_busy() and (time.time() - wait_t < 1.5):
+                time.sleep(0.03)
+
             tars_speaking = True
             _tars_speaking_since = time.time()
             if not pygame.mixer.get_init():
@@ -907,6 +911,8 @@ def speech_worker():
             print(f"  [Audio Playback Warning]: {play_err}")
             return False
         finally:
+            tars_speaking = False
+            _tars_speaking_since = 0.0
             try:
                 if audio_file_path and os.path.exists(audio_file_path):
                     os.remove(audio_file_path)
@@ -929,8 +935,6 @@ def speech_worker():
             continue
 
         try:
-            tars_speaking = True
-            _tars_speaking_since = time.time()
             # Print and update status in HUD
             print(f"\n  P.O.I.N.T.  B.R.E.A.K. >  {full_text}")
             update_status({"jarvis_says": full_text, "status": "speaking"})
@@ -1805,7 +1809,7 @@ def get_passkey_input_dual(prompt_text: str, timeout_sec: int = 15) -> str:
 def verify_passkey_security() -> bool:
     global _last_verification_time
     update_status({"status": "authenticating"})
-    speak("Biometric verification unconfirmed. Security passkey required, Sir.", block=True)
+    speak("Biometric verification unconfirmed. Security passkey required, Sir.", block=False)
     
     stored_passkey = memory.get("security_passkey", "tony ferguson").lower().strip()
     valid_keys = [stored_passkey, "tony ferguson", "tony", "ferguson", "pointbreak", "point break", "daksh", "open", "unlock"]
@@ -1825,13 +1829,13 @@ def verify_passkey_security() -> bool:
             else:
                 print(f"  [Security Protocol: Invalid passkey '{user_input}'. Attempt {attempt}/2]")
                 if attempt < 2:
-                    speak("Passkey incorrect. Please state or enter the correct passkey, Sir.", block=True)
+                    speak("Passkey incorrect. Please state or enter the correct passkey, Sir.", block=False)
                 else:
                     print("  [Security Protocol: Passkey attempts failed.]")
         else:
             print(f"  [Security Protocol: Inactivity timeout on attempt {attempt}/2]")
             if attempt < 2:
-                speak("No passkey received. One final attempt remaining, Sir.", block=True)
+                speak("No passkey received. One final attempt remaining, Sir.", block=False)
 
     # ── TERMINAL FAILSAFE OVERRIDE (Never lock workstation or crash) ──
     print("\n  ========================================================")
@@ -1850,7 +1854,7 @@ def verify_passkey_security() -> bool:
     except Exception as e:
         print(f"  [Terminal Override Error]: {e}")
 
-    speak("Authentication failed. Point Break standby mode engaged.", block=True)
+    speak("Authentication failed. Point Break standby mode engaged.", block=False)
     return False
 
 def extract_clean_youtube_query(raw_query: str) -> str:
@@ -8768,6 +8772,9 @@ def split_compound_commands(query: str) -> list:
 
 def execute(query: str):
     if not query or query == 'none': return True
+
+    # Immediate flush of stale queued speech and stop ongoing audio so new command is in perfect sync
+    stop_speech(hard=True)
 
     clean_raw = str(query).strip(' \t\n\r"\'\`“”')
     low_query = clean_raw.lower().strip()
