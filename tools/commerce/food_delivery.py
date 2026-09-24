@@ -45,6 +45,7 @@ class FoodDeliveryEngine:
         }
 
 food_delivery = FoodDeliveryEngine()
+food_delivery_engine = food_delivery
 
 @register_tool(name="order_food", description="Searches and orders food on Swiggy/Zomato", risk_level="R1")
 def order_food(query: str, **kwargs) -> Dict[str, Any]:

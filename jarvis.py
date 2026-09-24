@@ -119,14 +119,32 @@ try:
     from core.agent.runtime import agent_runtime
     from core.agent.state import task_store
     from tools.travel.train_engine import train_engine
+    from tools.travel.flight_engine import flight_engine
+    from tools.travel.hotel_engine import hotel_engine
     from tools.system.calendar_agent import calendar_agent
     from tools.communications.email_agent import email_agent
+    from tools.system.local_services import local_services_engine
+    from tools.office.spreadsheet_engine import spreadsheet_engine
+    from tools.office.presentation_engine import presentation_engine
+    from tools.office.document_engine import document_engine
+    from tools.office.research_engine import research_engine
+    from tools.commerce.shopping_sniper import shopping_sniper
+    from tools.commerce.food_delivery import food_delivery_engine
 except Exception as _pa_runtime_err:
     print(f"[PointBreak] Notice loading autonomous runtime: {_pa_runtime_err}")
     agent_runtime = None
     train_engine = None
+    flight_engine = None
+    hotel_engine = None
     calendar_agent = None
     email_agent = None
+    local_services_engine = None
+    spreadsheet_engine = None
+    presentation_engine = None
+    document_engine = None
+    research_engine = None
+    shopping_sniper = None
+    food_delivery_engine = None
 
 # ── SEMANTIC MEMORY (VECTOR DATABASE) ────────────────────────────────
 VECTOR_FILE = os.path.join(JARVIS_DIR, "tars_memory_vectors.json")
@@ -8879,6 +8897,70 @@ def _execute_single(query: str):
             clean_goal_directive = re.sub(r'^(?:goal|autonomous\s+task|plan\s+and\s+execute|automate|self\s*drive|agent\s+execute)[\s:]*', '', clean_raw, flags=re.I).strip()
             speak(f"Decomposing goal and initializing execution pipeline, Sir.", block=False)
             threading.Thread(target=lambda: agent_runtime.execute_goal(clean_goal_directive, speak_fn=speak), daemon=True).start()
+            return True
+
+    # 5. Canonical Flight Booking & Search Goals
+    if (re.search(r'\b(?:book\s+(?:a\s+)?flight|flight\s+ticket|search\s+flights?|fly\s+to|track\s+flight|airline\s+ticket)\b', low_query, re.I)
+        and not any(w in low_query for w in ["game", "sim", "simulator"])):
+        if agent_runtime:
+            speak("Initiating autonomous flight booking workflow, Sir.", block=False)
+            threading.Thread(target=lambda: agent_runtime.execute_goal(clean_raw, speak_fn=speak), daemon=True).start()
+            return True
+
+    # 6. Canonical Hotel Booking & Reservation Goals
+    if re.search(r'\b(?:book\s+(?:a\s+)?hotel|reserve\s+(?:a\s+)?hotel|hotel\s+in|hotels\s+in|search\s+hotels?|check\s+hotel\s+reservation)\b', low_query, re.I):
+        if agent_runtime:
+            speak("Searching accommodations and preparing reservation pipeline, Sir.", block=False)
+            threading.Thread(target=lambda: agent_runtime.execute_goal(clean_raw, speak_fn=speak), daemon=True).start()
+            return True
+
+    # 7. Local Services & Home Maintenance Dispatch
+    if re.search(r'\b(?:book|call|schedule|find|hire)\b.*\b(?:plumber|electrician|ac\s+repair|technician|car\s+service|mechanic)\b', low_query, re.I) or any(w in low_query for w in ["plumber near", "electrician near", "ac repair"]):
+        if agent_runtime:
+            speak("Locating verified technicians and preparing service appointment, Sir.", block=False)
+            threading.Thread(target=lambda: agent_runtime.execute_goal(clean_raw, speak_fn=speak), daemon=True).start()
+            return True
+
+    # 8. Customer Support & Consumer Grievances
+    if re.search(r'\b(?:file\s+(?:a\s+)?complaint|draft\s+(?:a\s+)?complaint|support\s+ticket|grievance\s+notice|formal\s+complaint)\b', low_query, re.I):
+        if agent_runtime:
+            speak("Drafting formal grievance notice and opening support case, Sir.", block=False)
+            threading.Thread(target=lambda: agent_runtime.execute_goal(clean_raw, speak_fn=speak), daemon=True).start()
+            return True
+
+    # 9. Presentation Deck Generation
+    if re.search(r'\b(?:create|make|generate|build)\b.*\b(?:presentation|powerpoint|slide\s*deck|slides)\b', low_query, re.I):
+        if agent_runtime:
+            speak("Generating presentation slide deck with speaker notes, Sir.", block=False)
+            threading.Thread(target=lambda: agent_runtime.execute_goal(clean_raw, speak_fn=speak), daemon=True).start()
+            return True
+
+    # 10. Spreadsheets, Tabular Data & Charts
+    if re.search(r'\b(?:create|make|generate|analyze|plot)\b.*\b(?:spreadsheet|excel|csv\s+file|data\s+chart)\b', low_query, re.I):
+        if agent_runtime:
+            speak("Compiling spreadsheet dataset and visualizing metrics, Sir.", block=False)
+            threading.Thread(target=lambda: agent_runtime.execute_goal(clean_raw, speak_fn=speak), daemon=True).start()
+            return True
+
+    # 11. Word Documents & Executive Whitepapers
+    if re.search(r'\b(?:create|write|draft|author)\b.*\b(?:document|report|whitepaper|doc|docx)\b', low_query, re.I) and not any(w in low_query for w in ["email", "mail"]):
+        if agent_runtime:
+            speak("Authoring executive formatted document, Sir.", block=False)
+            threading.Thread(target=lambda: agent_runtime.execute_goal(clean_raw, speak_fn=speak), daemon=True).start()
+            return True
+
+    # 12. Deep Research Dossiers
+    if re.search(r'\b(?:deep\s+research|research\s+dossier|synthesize\s+dossier|investigate\s+topic)\b', low_query, re.I):
+        if agent_runtime:
+            speak("Synthesizing multi-source intelligence dossier, Sir.", block=False)
+            threading.Thread(target=lambda: agent_runtime.execute_goal(clean_raw, speak_fn=speak), daemon=True).start()
+            return True
+
+    # 13. Swiggy vs Zomato Food Comparison & Cart
+    if any(k in low_query for k in ["compare food", "swiggy vs zomato", "zomato vs swiggy", "which is cheaper swiggy or zomato", "whichever is cheaper"]):
+        if agent_runtime:
+            speak("Comparing dish prices between Swiggy and Zomato, Sir.", block=False)
+            threading.Thread(target=lambda: agent_runtime.execute_goal(clean_raw, speak_fn=speak), daemon=True).start()
             return True
 
     # ── HIGHEST PRIORITY: EXPLICIT GUI ACTION DISPATCHER (action click, action type, etc.) ──
