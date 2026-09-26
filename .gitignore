@@ -29,6 +29,7 @@ tars_licenses.json
 active_task.json
 *.log
 *.tmp
+/*.wav
 scratch/
 
 # Operating System Files

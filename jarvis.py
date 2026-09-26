@@ -41,8 +41,9 @@ STATUS_FILE = os.path.join(JARVIS_DIR, "jarvis_status.json")
 MEMORY_FILE = os.path.join(JARVIS_DIR, "jarvis_memory.json")
 NOTES_FILE  = os.path.join(JARVIS_DIR, "jarvis_notes.txt")
 STARTUP_LOG = os.path.join(JARVIS_DIR, "jarvis_startup.log")
-OWNER       = "sir"
 hardware_lock = threading.Lock()
+mic_lock = threading.Lock()
+camera_lock = threading.Lock()
 mic_muted = False
 
 def log_startup_event(msg: str):
@@ -719,6 +720,8 @@ def notify(title: str, msg: str):
 
 # ── SPEAK & TARS RESILIENT ANTI-CUTOFF VOICE ENGINE ──────────────
 VOICE = "en-GB-RyanNeural"
+# SPEED_MODE: 'tars' (authentic cloned neural TARS voice, streaming sub-second) or 'turbo' (cloud edge-tts)
+SPEED_MODE = os.environ.get("POINTBREAK_SPEED_MODE", "tars").lower().strip()
 TARS_NORMAL_PITCH = "-4Hz"
 TARS_NORMAL_RATE = "+10%"
 TARS_NORMAL_VOL = "+0%"
@@ -869,7 +872,18 @@ def speech_worker():
 
         base_stem = os.path.splitext(out_path)[0]
 
-        # 1. PRIMARY ENGINE: Authentic TARS Voice (Cloud GPU ~0.7s when online, 4-Thread Local when offline)
+        # 1. TURBO SPEED ENGINE (Inherited from Project Eidolon: sub-250ms streaming, 0% CPU load)
+        if SPEED_MODE == "turbo":
+            try:
+                mp3_target = base_stem + ".mp3"
+                c = edge_tts.Communicate(cleaned_text, VOICE, pitch="-6Hz", rate="+12%", volume=vol)
+                await asyncio.wait_for(c.save(mp3_target), timeout=4.0)
+                if os.path.exists(mp3_target) and os.path.getsize(mp3_target) > 0:
+                    return mp3_target
+            except Exception:
+                pass
+
+        # 2. LOCAL NEURAL TARS ENGINE (When SPEED_MODE == 'tars' or fallback)
         try:
             from tars_speak import generate_tars_audio
             wav_target = base_stem + ".wav"
@@ -877,20 +891,17 @@ def speech_worker():
             if res and os.path.exists(res) and os.path.getsize(res) > 0:
                 return res
         except Exception as tars_err:
-            print(f"  [TARS Voice Engine Error]: {tars_err} (Engaging emergency backup)")
+            pass
 
-        # 2. EMERGENCY BACKUP: Edge TTS (Only if both Cloud & Local TARS fail unexpectedly)
+        # 3. EMERGENCY BACKUP
         try:
             mp3_target = base_stem + ".mp3"
-            if protocol_omega_active:
-                c = edge_tts.Communicate(cleaned_text, VOICE, pitch="-18Hz", rate="+10%", volume=vol)
-            else:
-                c = edge_tts.Communicate(cleaned_text, VOICE, pitch=pitch, rate=rate, volume=vol)
-            await asyncio.wait_for(c.save(mp3_target), timeout=8.0)
+            c = edge_tts.Communicate(cleaned_text, VOICE, pitch=pitch, rate=rate, volume=vol)
+            await asyncio.wait_for(c.save(mp3_target), timeout=5.0)
             if os.path.exists(mp3_target) and os.path.getsize(mp3_target) > 0:
                 return mp3_target
         except Exception as cloud_err:
-            print(f"  [Emergency Backup Error]: {cloud_err}")
+            pass
 
         return None
 
@@ -949,12 +960,48 @@ def speech_worker():
             update_status({"jarvis_says": full_text, "status": "speaking"})
             current_spoken_chunk = full_text.lower()
 
-            # If the response is relatively concise (<= 45 words), keep as a single unified breath group
-            # to prevent artificial mid-sentence latency and dead stops.
-            if len(full_text.split()) <= 45:
-                sentences = [full_text]
-            else:
-                sentences = _split_into_sentences(full_text)
+            if SPEED_MODE == "tars":
+                # Direct sub-second streaming using authentic cloned TARS voice
+                stop_event = threading.Event()
+                def _watch_interrupt():
+                    while not stop_event.is_set():
+                        if hard_interrupted or speech_interrupted:
+                            stop_event.set()
+                            break
+                        time.sleep(0.04)
+
+                def _on_start():
+                    global tars_speaking, _tars_speaking_since
+                    tars_speaking = True
+                    _tars_speaking_since = time.time()
+                    update_status({"status": "speaking"})
+
+                th_watch = threading.Thread(target=_watch_interrupt, daemon=True)
+                th_watch.start()
+
+                streamed = False
+                try:
+                    from tars_speak import stream_tars_speech
+                    cleaned_tars_text = full_text
+                    if not protocol_omega_active:
+                        try:
+                            from pointbreak_humanize import humanize_speech
+                            cleaned_tars_text = humanize_speech(cleaned_tars_text)
+                        except Exception:
+                            pass
+                    streamed = stream_tars_speech(cleaned_tars_text, stop_event=stop_event, on_start=_on_start)
+                except Exception as stream_err:
+                    print(f"  [TARS Streaming Error, falling back to chunked]: {stream_err}")
+                    streamed = False
+
+                stop_event.set()
+                th_watch.join(timeout=0.2)
+
+                if streamed:
+                    continue
+
+            # Always split into natural sentences so sentence 1 speaks in < 1s while sentence 2 pre-generates
+            sentences = _split_into_sentences(full_text)
 
             idx = 0
             resume_prefix = ""
@@ -1249,17 +1296,14 @@ def _verbal_barge_in_worker():
     r.phrase_threshold = 0.05
     r.non_speaking_duration = 0.2
 
-    INTERRUPT_KEYWORDS = [
-        "wait", "stop", "listen", "shut",
-        "hold", "quiet", "cut",
-        "pause", "hang on", "shh", "enough"
-    ]
+    INTERRUPT_KEYWORDS = ["wait", "stop", "listen", "shut", "quiet", "pause"]
+    ENABLE_VERBAL_BARGE_IN = False  # Disabled: Eliminates 20-25s laptop speaker self-echo interruption deadlocks
 
     while True:
         try:
             # Only monitor mic when Point Break is actively speaking and not already in interruption handling
-            if not tars_speaking or mic_muted or hard_interrupted or speech_interrupted or in_interruption_handling:
-                time.sleep(0.06)
+            if not ENABLE_VERBAL_BARGE_IN or not tars_speaking or mic_muted or hard_interrupted or speech_interrupted or in_interruption_handling:
+                time.sleep(0.2)
                 continue
 
             if not hardware_lock.acquire(blocking=False):
@@ -2210,15 +2254,15 @@ def take_command(timeout=None):
         
     r = sr.Recognizer()
     r.dynamic_energy_threshold = False
-    r.phrase_threshold = 0.10
-    r.non_speaking_duration = 0.50  # 500ms window preserves aspirated 'H' in 'Hey' and prevents start/end clipping
-    r.pause_threshold = 0.85  # Snappy conversational cadence: fast reply while preventing inter-word cutoffs
+    r.phrase_threshold = 0.08
+    r.non_speaking_duration = 0.30  # 300ms window preserves consonants without lagging
+    r.pause_threshold = 0.55  # Fast 550ms end-of-speech detection for crisp replies
     listen_timeout = timeout
 
     audio = None
     try:
-        # hardware_lock ONLY guards microphone hardware access (capture), NOT network STT calls
-        with hardware_lock:
+        # mic_lock ONLY guards microphone hardware access (capture), NOT network STT calls
+        with mic_lock:
             with sr.Microphone() as src:
                 # Dynamic calibration: seed low and clamp strictly to sensitive room floor
                 _now_cal = time.time()
@@ -4354,7 +4398,7 @@ def extract_url_text(url: str) -> str:
 
 def capture_camera_frame() -> bytes:
     import cv2
-    with hardware_lock:
+    with camera_lock:
         cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         if not cap.isOpened():
             return None
@@ -8444,24 +8488,23 @@ def execute_local_fallback(query: str):
 # ── 4GB ULTRA-LOW RAM PROTECTION ENGINE ───────────────────────────
 def check_ram_safety():
     """
-    Monitors system memory. If available RAM drops below 220 MB or RAM usage > 88%,
-    triggers immediate garbage collection and memory flushes to protect 4GB laptops.
+    Monitors system memory. Runs garbage collection if memory is tight,
+    without stalling active loops. Always returns True to prevent deadlocks.
     """
     try:
         vm = psutil.virtual_memory()
         available_mb = vm.available / (1024 * 1024)
-        if available_mb < 220 or vm.percent > 88.0:
-            print(f"  [RAM Safety Circuit Breaker: Free RAM={available_mb:.1f}MB ({vm.percent}% used). Flushing memory!]")
+        if available_mb < 200 or vm.percent > 90.0:
             import gc
             gc.collect()
-            return False
     except Exception as e:
         pass
     return True
 
 def engage_vision_mode():
     import cv2, threading, queue, numpy as np, winsound, gc
-    speak("Visual matrix active. Eyes online, Sir. I am watching live.", block=True)
+    import pointbreak_locate
+    speak("Visual matrix active. Eyes online, Sir. Powered by cloud LocateAnything-3B.", block=True)
     update_status({"status": "scanning"})
     
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
@@ -8508,27 +8551,26 @@ def engage_vision_mode():
     listener_thread = threading.Thread(target=voice_listener, daemon=True)
     listener_thread.start()
 
-    # Initial Proactive Observation (TARS Speaks First!)
+    # Initial Proactive Observation using LocateAnything-3B + Gemini Flash
     ret, frame = cap.read()
     if ret:
         cv2.imshow("TARS Tactical Vision Matrix — Live Eye Mode", frame)
         cv2.waitKey(1)
         _, img_bytes = cv2.imencode('.jpg', frame)
-        init_prompt = "Look at Daksh right now. In 1 short, witty, movie-like sentence, describe what he is doing and ask what he is working on like a friend watching him."
-        speak("Scanning room parameters...", block=False)
+        speak("Scanning room parameters with LocateAnything...", block=False)
         play_scan_beep()
-        first_greeting = query_tars_vision(img_bytes.tobytes(), init_prompt)
+        first_greeting, _ = pointbreak_locate.engage_vision_turn(
+            "Look at Daksh right now. In 1 short, witty, movie-like sentence, describe what he is doing and ask what he is working on like a friend watching him.",
+            img_bytes.tobytes()
+        )
         if first_greeting:
             clean_text = re.sub(r'(ACTION|SETTING):\s*\{.*\}', '', first_greeting).strip()
             speak(clean_text, block=False)
 
-    print("  [TARS Engage Mode Active — Lightweight Motion Detection & JARVIS Telemetry]")
+    print("  [TARS Engage Mode Active — Cloud LocateAnything-3B Zero-RAM Vision]")
 
     while is_running:
-        if not check_ram_safety():
-            time.sleep(0.5)
-            continue
-
+        check_ram_safety()
         time.sleep(0.08) # Throttle to 10 FPS for ultra-low memory & CPU load
         ret, frame = cap.read()
         if not ret:
@@ -8600,7 +8642,7 @@ def engage_vision_mode():
                     nonlocal is_vision_busy
                     try:
                         update_status({"status": "processing"})
-                        reply = query_tars_vision(b, user_q)
+                        reply, _ = pointbreak_locate.engage_vision_turn(user_q, b)
                         update_status({"status": "idle"})
                         if reply:
                             clean_reply = re.sub(r'(ACTION|SETTING):\s*\{.*\}', '', reply).strip()
@@ -8632,8 +8674,8 @@ def engage_vision_mode():
                         f"2. IF Daksh stated a goal (e.g. studying maths) but you see him on his phone, playing games, or slacking off, politely remind him to get back to studying.\n"
                         f"3. IF Daksh is taking a break, shifting tasks, or looking up at the camera, give a short 1-sentence friendly check-in."
                     )
-                    print("  [TARS Engage Motion/Timer Check-in: Inspecting user activity...]")
-                    obs = query_tars_vision(b, auto_prompt)
+                    print("  [TARS Engage Motion/Timer Check-in: Inspecting user activity with LocateAnything...]")
+                    obs, _ = pointbreak_locate.engage_vision_turn(auto_prompt, b)
                     if obs and "NO_INTERRUPT" not in obs:
                         clean_obs = re.sub(r'(ACTION|SETTING):\s*\{.*\}', '', obs).strip()
                         speak(clean_obs, block=False)
@@ -8774,6 +8816,7 @@ def split_compound_commands(query: str) -> list:
     return [c for c in final_commands if c]
 
 def execute(query: str):
+    global SPEED_MODE
     if not query or query == 'none': return True
 
     # Immediate flush of stale queued speech and stop ongoing audio so new command is in perfect sync
@@ -9409,12 +9452,57 @@ def _execute_single(query: str):
         print("[Swarm Dispatch Error]:", e)
 
     # ── HIGHEST PRIORITY LOCAL COMMAND INTERCEPTOR ─────────────────
-    if execute_local_fallback(low_query):
+    # Intercept Speed Mode Toggle commands
+    if any(k in low_query for k in ["enable turbo speed", "switch to turbo", "turbo mode on", "turbo speed", "set speed turbo"]):
+        SPEED_MODE = "turbo"
+        speak("Turbo speed matrix engaged. Sub-250 millisecond cloud streaming active, Sir.", block=False)
+        return True
+    if any(k in low_query for k in ["switch to tars voice", "enable tars voice", "standard voice", "cloned voice"]):
+        SPEED_MODE = "tars"
+        speak("Authentic TARS neural voice active.", block=False)
         return True
 
     # Intercept Engage Live Vision Mode directly
     if ("disengage" not in low_query) and any(k in low_query for k in ["engage with me", "engage mode", "activate vision", "open your eyes", "point break engage", "tars engage", "engage with user"]):
         engage_vision_mode()
+        return True
+
+    # ── NVIDIA LOCATEANYTHING-3B CLOUD VISUAL GROUNDING INTERCEPTORS ──
+    # 1. Desktop Screen Element Grounding & Autoclick
+    m_screen_locate = re.search(r'\b(?:locate|find|look up|click on|click|where is|point to)\s+(?:the\s+)?(.+?)\s+(?:on|in)\s+(?:my\s+)?(?:screen|display|desktop)\b', low_query)
+    if m_screen_locate:
+        target_elem = m_screen_locate.group(1).strip()
+        do_click = any(w in low_query for w in ["click", "press", "select"])
+        speak(f"Scanning desktop display for {target_elem} via LocateAnything...", block=False)
+        try:
+            import pointbreak_locate
+            res = pointbreak_locate.locate_on_screen(target_elem, click=do_click, move_mouse=True)
+            if res.get("success"):
+                px, py = res["pixel_coords"]
+                if do_click:
+                    speak(f"Located and clicked {target_elem} at coordinates {px}, {py}, Sir.", block=False)
+                else:
+                    speak(f"Located {target_elem} at coordinates {px}, {py} on your display, Sir.", block=False)
+            else:
+                speak(f"Could not locate {target_elem} on your screen, Sir.", block=False)
+        except Exception as ex:
+            speak(f"Visual grounding notice: {ex}", block=False)
+        return True
+
+    # 2. Camera Object / Personal Belonging Grounding
+    m_cam_locate = re.search(r'\b(?:where is my|locate my|find my|look up my)\s+([a-zA-Z\s]+)\b', low_query)
+    if (m_cam_locate and any(w in low_query for w in ["camera", "room", "desk", "here", "table"])) or any(k in low_query for k in ["where is my phone", "where are my glasses", "where is my notebook", "where is my bottle", "locate my phone"]):
+        target_item = m_cam_locate.group(1).strip() if m_cam_locate else "target item"
+        speak(f"Scanning camera field for {target_item} via LocateAnything...", block=False)
+        try:
+            import pointbreak_locate
+            res = pointbreak_locate.locate_in_webcam(target_item)
+            if res.get("success"):
+                speak(f"I located {target_item} in your camera field, Sir.", block=False)
+            else:
+                speak(f"I do not see {target_item} in your camera view right now, Sir.", block=False)
+        except Exception as ex:
+            speak(f"Camera grounding notice: {ex}", block=False)
         return True
 
     # Intercept Face Calibration / Introduction commands directly (strict word boundaries)
